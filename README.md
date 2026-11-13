@@ -58,3 +58,5 @@ npm run build    # output di dist/
 - Belum diuji ke Telegram sungguhan — jalankan `SMOKE_TEST.md` dulu.
 - Semua anggota grup dipercaya penuh (bisa menulis SQL apa pun). Menghapus/mengedit pesan grup merusak log.
 - Throughput rendah (batas rate Telegram). Rotasi kunci belum ada. Risiko ToS Telegram untuk pemakaian berat.
+
+- **Undang @username**: tombol di panel Bagikan menambahkan user ke grup (dan opsional DM connection string — Telegram bisa melihat DM itu). Belum diuji ke Telegram asli; privasi target dapat menolak.

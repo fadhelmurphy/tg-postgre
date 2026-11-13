@@ -41,6 +41,24 @@ export async function resolveInvite(client, hash) {
   return imp.chats[0];
 }
 
+/** Tambahkan @username ke grup; opsional kirim connection string lewat DM. */
+export async function inviteUser(client, chat, username, { connStr = '', sendKey = false } = {}) {
+  const name = String(username || '').trim().replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '');
+  if (!/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(name)) throw new Error('Username Telegram tidak valid (5–32 karakter, huruf/angka/_).');
+  let user;
+  try { user = await client.getInputEntity(name); }
+  catch { throw new Error('Username @' + name + ' tidak ditemukan.'); }
+  const r = await client.invoke(new Api.channels.InviteToChannel({ channel: chat, users: [user] }));
+  if (r && r.missingInvitees && r.missingInvitees.length)
+    throw new Error('@' + name + ' tidak bisa ditambahkan (pengaturan privasinya menolak). Kirim link undangan secara manual.');
+  let dm = false;
+  if (sendKey) {
+    await client.sendMessage(user, { message: 'Undangan database TGPG. Buka aplikasi TGPG → Gabung, lalu tempel connection string ini (berisi kunci enkripsi, jangan dibagikan):\n\n' + connStr });
+    dm = true;
+  }
+  return { username: name, dm };
+}
+
 export class TelegramTransport {
   constructor(client, entity) { this.client = client; this.entity = entity; }
 

@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import { b64u, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, TelegramTransport } from './telegram.js';
+import { connectClient, createChannel, resolveInvite, inviteUser, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -37,6 +37,10 @@ const ws = new Workspace($('c-work'), {
   onReset: () => resetLocal().catch(e => log('Gagal: ' + errMsg(e), 'er')),
   onClose: () => closeDatabase(),
   getConn: () => current?.conn || '',
+  onInvite: async (username, sendKey) => {
+    if (!current) throw new Error('Tidak ada database terbuka.');
+    return inviteUser(client, current.chat, username, { connStr: current.conn, sendKey });
+  },
 });
 
 function showHome(on) {

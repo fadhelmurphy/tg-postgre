@@ -108,3 +108,4 @@ button.danger:hover{background:#5a2323}
 .nullbox{font-size:12px;color:var(--mu);white-space:nowrap;padding-top:8px}
 .nullbox input{flex:none;min-width:0;width:auto;padding:0;margin:0 4px 0 0;vertical-align:middle}
 .net{font-size:12px;white-space:nowrap}
+.invite{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}.invite input[type=text]{min-width:0;flex:1 1 160px}.invite input[type=checkbox]{flex:none;min-width:0;width:auto}.invite .mu,.invite .ok,.invite .er{flex:1 1 100%;font-size:12px}

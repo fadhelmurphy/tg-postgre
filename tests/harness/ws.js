@@ -15,7 +15,7 @@ await engine.write(`insert into app.users(name, email) values ('Budi', 'budi@x.i
 await engine.write(`create index notes_n_idx on notes(n)`);
 await engine.write(`create table nopk(a int); insert into nopk values (1)`);
 const ws = new Workspace(document.getElementById('c-work'), {
-  onSync: () => engine.sync(), onSnapshot: () => engine.snapshot(), onReset: () => {}, onClose: () => {}, getConn: () => 'tgpg://CONTOH#KUNCI',
+  onSync: () => engine.sync(), onSnapshot: () => engine.snapshot(), onReset: () => {}, onClose: () => {}, getConn: () => 'tgpg://CONTOH#KUNCI', onInvite: async (u, k) => { if (u === '@gagal_user') throw new Error('@gagal_user tidak ditemukan.'); return { username: u.replace('@', ''), dm: k }; },
 });
 engine.onApplied = n => ws.notifyApplied(n);
 engine.onSync = (ok, err) => ws.setSyncState(ok, err);

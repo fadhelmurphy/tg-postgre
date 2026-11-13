@@ -4,6 +4,7 @@
 //  - {search:q}: terbaru dulu, filter teks/caption
 //  - sendFile(CustomFile{buffer}) -> dokumen; downloadMedia(msg) -> Buffer
 //  - NewMessage(chats:[entity]) dipicu untuk semua klien (termasuk pengirim)
+import { inviteUser } from '../src/telegram.js';
 import { describe, it, expect } from 'vitest';
 import { Buffer } from 'node:buffer';
 import { PGlite } from '@electric-sql/pglite';
@@ -104,5 +105,30 @@ describe('TelegramTransport + Engine (klien GramJS tiruan)', () => {
     const a = await open(s, key, 'A'); const c = [...s.clients][0];
     expect(c.handlers).toHaveLength(1);
     await a.close(); expect(c.handlers).toHaveLength(0);
+  });
+});
+
+describe('inviteUser', () => {
+  const mk = (invResult = {}) => {
+    const calls = { inv: [], dm: [] };
+    return { calls, client: {
+      getInputEntity: async n => { if (n === 'hilang_user') throw new Error('x'); return { u: n }; },
+      invoke: async r => { calls.inv.push(r); return invResult; },
+      sendMessage: async (u, o) => { calls.dm.push([u, o.message]); },
+    } };
+  };
+  it('menambahkan ke grup, DM opsional', async () => {
+    const a = mk(); const r = await inviteUser(a.client, { id: 1 }, '@budi_123', { connStr: 'tgpg://X#K', sendKey: false });
+    expect(r).toEqual({ username: 'budi_123', dm: false }); expect(a.calls.inv.length).toBe(1); expect(a.calls.dm.length).toBe(0);
+    const b = mk(); const r2 = await inviteUser(b.client, { id: 1 }, 'https://t.me/budi_123', { connStr: 'tgpg://X#K', sendKey: true });
+    expect(r2.dm).toBe(true); expect(b.calls.dm[0][1]).toContain('tgpg://X#K');
+  });
+  it('menolak username tidak valid / tidak ada / privasi menolak', async () => {
+    const a = mk();
+    await expect(inviteUser(a.client, {}, 'ab')).rejects.toThrow(/tidak valid/);
+    await expect(inviteUser(a.client, {}, 'hilang_user')).rejects.toThrow(/tidak ditemukan/);
+    const p = mk({ missingInvitees: [{ userId: 1 }] });
+    await expect(inviteUser(p.client, {}, 'budi_123')).rejects.toThrow(/privasi/);
+    expect(p.calls.dm.length).toBe(0);
   });
 });

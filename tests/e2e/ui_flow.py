@@ -1,10 +1,10 @@
 """E2E UI (Chrome headless) terhadap harness workspace (engine + transport in-memori, tanpa Telegram).
 Jalankan:  npm run build:harness && python3 -m http.server 4173 -d /tmp/harness-site &  python3 tests/e2e/ui_flow.py
-Env: BASE_URL (default http://localhost:4173/harness/ws.html), CHROME_PATH (opsional)."""
+Env: BASE_URL (default http://localhost:4173/ws.html), CHROME_PATH (opsional)."""
 import json, os, sys
 from playwright.sync_api import sync_playwright
 
-URL = os.environ.get('BASE_URL', 'http://localhost:4173/harness/ws.html')
+URL = os.environ.get('BASE_URL', 'http://localhost:4173/ws.html')
 CHROME = os.environ.get('CHROME_PATH')
 SHOTS = os.environ.get('SHOT_DIR', '/tmp')
 res = []
@@ -117,6 +117,14 @@ with sync_playwright() as p:
     js = json.load(open(d2.value.path())); ck('export JSON hasil query', len(js) == 5)
     n0 = pg.locator('.tabbar .tab').count(); pg.locator('.tabbar .tab .x').first.click(); ck('tutup tab', pg.locator('.tabbar .tab').count() == n0 - 1)
     pg.screenshot(path=f'{SHOTS}/shot-desktop.png')
+
+    # ── undang username
+    pg.locator('button', has_text='Bagikan').click()
+    pg.fill('.invite input[type=text]', '@budi_123'); pg.locator('.invite button', has_text='Undang').click(); pg.wait_for_timeout(300)
+    ck('undang: sukses', 'ditambahkan ke grup' in pg.inner_text('.invite'), pg.inner_text('.invite'))
+    pg.fill('.invite input[type=text]', '@gagal_user'); pg.locator('.invite button', has_text='Undang').click(); pg.wait_for_timeout(300)
+    ck('undang: error tampil', 'tidak ditemukan' in pg.inner_text('.invite'))
+    pg.locator('button', has_text='Bagikan').click()
 
     # ── offline / online
     pg.locator('button', has_text='Sinkron').first.click(); pg.wait_for_timeout(500)

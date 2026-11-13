@@ -50,9 +50,17 @@ export class Workspace {
     this.syncState = { ok: null, at: 0, err: '' };
     this.sideBtn = h('button', { class: 'sec small side-toggle', title: 'Objek', onClick: () => this.side.classList.toggle('open') }, '☰');
     this.shareStr = h('span', { class: 'mono' });
+    this.invUser = h('input', { type: 'text', placeholder: '@username', 'aria-label': 'Username Telegram', autocomplete: 'off' });
+    this.invSend = h('input', { type: 'checkbox', id: 'inv-send' });
+    this.invMsg = h('div', { class: 'mu', role: 'status' });
     this.sharePanel = h('div', { class: 'ws-share', hidden: true },
       h('div', { class: 'mu' }, 'Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):'), this.shareStr,
-      h('button', { class: 'sec small', onClick: () => navigator.clipboard.writeText(this.shareStr.textContent) }, 'Salin'));
+      h('button', { class: 'sec small', onClick: () => navigator.clipboard.writeText(this.shareStr.textContent) }, 'Salin'),
+      h('div', { class: 'invite' },
+        this.invUser, this.invSend, h('label', { for: 'inv-send', class: 'mu' }, 'Kirim juga connection string via DM'),
+        h('button', { class: 'small', onClick: () => this.invite() }, 'Undang'),
+        this.invMsg,
+        h('div', { class: 'mu' }, 'Menambahkan ke grup saja tidak cukup: orang itu butuh kunci. Mengirim kunci via DM berarti Telegram bisa melihatnya; jika tidak mau, kirim lewat jalur lain.')));
     const bar = h('div', { class: 'ws-bar' }, this.sideBtn, this.titleEl, this.statEl, this.netEl, h('span', { class: 'spacer' }),
       h('button', { class: 'sec small', onClick: () => this.cb.onSync() }, 'Sinkron'),
       h('button', { class: 'sec small', onClick: () => this.cb.onSnapshot() }, 'Snapshot'),
@@ -111,6 +119,17 @@ export class Workspace {
   setSyncState(ok, err) {
     this.syncState = { ok, at: ok ? Date.now() : this.syncState.at, err: err ? (err.message || String(err)) : '' };
     this.renderNet();
+  }
+
+  async invite() {
+    const u = this.invUser.value.trim(); if (!u) return;
+    this.invMsg.className = 'mu'; this.invMsg.textContent = 'Mengundang…';
+    try {
+      const r = await this.cb.onInvite(u, this.invSend.checked);
+      this.invMsg.className = 'ok';
+      this.invMsg.textContent = '@' + r.username + ' ditambahkan ke grup' + (r.dm ? ' dan connection string dikirim via DM.' : '. Kirimkan connection string secara terpisah.');
+      this.invUser.value = '';
+    } catch (e) { this.invMsg.className = 'er'; this.invMsg.textContent = e.message || String(e); }
   }
 
   renderNet() {
