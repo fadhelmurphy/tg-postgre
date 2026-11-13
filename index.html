@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!--CSP-->
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f9cff'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'%3ETG%3C/text%3E%3C/svg%3E">
+<title>TGPG · Postgres di browser, data di Telegram</title>
+</head>
+<body>
+<main>
+  <h1>TGPG</h1>
+  <p class="sub">PostgreSQL (PGlite/WASM) di browser · data dibagi lewat grup Telegram · tanpa TCP, tanpa backend</p>
+
+  <section class="card" id="c-unlock" hidden>
+    <h2>Buka kunci</h2>
+    <div class="row"><input id="unlockPass" type="password" placeholder="Passphrase"><button id="btnUnlock">Buka</button></div>
+    <button id="btnWipe" class="sec small">Lupa passphrase? Hapus data lokal</button>
+  </section>
+
+  <section class="card" id="c-login" hidden>
+    <h2>1 · Login Telegram</h2>
+    <p class="hint">Ambil <b>api_id</b> dan <b>api_hash</b> di <span class="mono">my.telegram.org</span> → API development tools. Pakai akun Telegram khusus, bukan akun utama.</p>
+    <div class="row"><input id="apiId" placeholder="api_id" inputmode="numeric" autocomplete="off"><input id="apiHash" placeholder="api_hash" autocomplete="off"></div>
+    <div class="row"><input id="name" placeholder="Nama tampilan (penanda penulis)" autocomplete="off"><input id="newPass" type="password" placeholder="Passphrase lokal (min. 8 karakter)" autocomplete="new-password"></div>
+    <div class="row"><button id="btnLogin">Login</button></div>
+    <div class="row" id="askRow" hidden><input id="askInput" autocomplete="one-time-code"><button id="askBtn">Kirim</button></div>
+  </section>
+
+  <section class="card" id="c-db" hidden>
+    <h2>2 · Database</h2>
+    <div class="mu" id="who"></div>
+    <div id="saved"></div>
+    <div class="row"><input id="dbName" placeholder="Nama database baru"><button id="btnCreate">Buat baru</button></div>
+    <div class="row"><input id="connStr" placeholder="tgpg://INVITE#KUNCI" autocomplete="off"><button id="btnConnect" class="sec">Connect</button></div>
+    <div id="shareBox" hidden>
+      <div class="mu">Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):</div>
+      <div class="mono" id="shareStr"></div>
+      <button id="btnCopy" class="sec small">Salin</button>
+    </div>
+  </section>
+
+  <section class="card" id="c-sql" hidden>
+    <h2>3 · SQL <span class="mu" id="stat"></span></h2>
+    <textarea id="sql" spellcheck="false" aria-label="SQL"></textarea>
+    <div class="row">
+      <button id="btnRun">Run (Ctrl+Enter)</button>
+      <button id="btnSync" class="sec">Sinkron</button>
+      <button id="btnSnap" class="sec">Snapshot</button>
+      <button id="btnReset" class="sec">Reset salinan lokal</button>
+    </div>
+    <div id="out"></div>
+  </section>
+
+  <section class="card"><h2>Log</h2><div id="log" role="log"></div></section>
+  <p class="hint">Semua anggota grup dapat menjalankan SQL apa pun (termasuk DROP). Beri akses hanya ke orang yang dipercaya.</p>
+</main>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
