@@ -34,26 +34,11 @@
     <div id="saved"></div>
     <div class="row"><input id="dbName" placeholder="Nama database baru"><button id="btnCreate">Buat baru</button></div>
     <div class="row"><input id="connStr" placeholder="tgpg://INVITE#KUNCI" autocomplete="off"><button id="btnConnect" class="sec">Connect</button></div>
-    <div id="shareBox" hidden>
-      <div class="mu">Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):</div>
-      <div class="mono" id="shareStr"></div>
-      <button id="btnCopy" class="sec small">Salin</button>
-    </div>
   </section>
 
-  <section class="card" id="c-sql" hidden>
-    <h2>3 · SQL <span class="mu" id="stat"></span></h2>
-    <textarea id="sql" spellcheck="false" aria-label="SQL"></textarea>
-    <div class="row">
-      <button id="btnRun">Run (Ctrl+Enter)</button>
-      <button id="btnSync" class="sec">Sinkron</button>
-      <button id="btnSnap" class="sec">Snapshot</button>
-      <button id="btnReset" class="sec">Reset salinan lokal</button>
-    </div>
-    <div id="out"></div>
-  </section>
+  <section id="c-work" class="work" hidden></section>
 
-  <section class="card"><h2>Log</h2><div id="log" role="log"></div></section>
+  <details class="card" id="logCard"><summary>Log</summary><div id="log" role="log"></div></details>
   <p class="hint">Semua anggota grup dapat menjalankan SQL apa pun (termasuk DROP). Beri akses hanya ke orang yang dipercaya.</p>
 </main>
 <script type="module" src="/src/main.js"></script>

@@ -24,3 +24,72 @@ th{background:#1d212b}
 .ok{color:var(--ok)}.er{color:var(--er)}.mu{color:var(--mu)}
 .saved-item{display:flex;gap:8px;align-items:center;margin-bottom:8px}
 .saved-item span{flex:1}
+
+/* ───────── workspace (ala pgAdmin) ───────── */
+main.wide{max-width:1400px}
+.card summary{cursor:pointer;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mu)}
+.work{margin-bottom:14px}
+.ws-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--card);border:1px solid var(--bd);border-radius:10px 10px 0 0;padding:8px 10px}
+.ws-bar .spacer,.row .spacer{flex:1}
+.ws-title{font-size:15px}
+.side-toggle{display:none}
+.ws-share{background:#12151b;border:1px solid var(--bd);border-top:0;padding:8px 10px}
+.ws-body{display:grid;grid-template-columns:270px minmax(0,1fr);border:1px solid var(--bd);border-top:0;border-radius:0 0 10px 10px;background:var(--card);min-height:520px}
+.ws-side{border-right:1px solid var(--bd);padding:8px;overflow:auto;max-height:78vh}
+.side-head{display:flex;justify-content:space-between;align-items:center;color:var(--mu);font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.tree details>summary{list-style:none;cursor:pointer;padding:4px 6px;border-radius:5px;display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--tx)}
+.tree details>summary::-webkit-details-marker{display:none}
+.tree details>summary:hover{background:#1d212b}
+.tree details>summary::before{content:'▸';color:var(--mu);font-size:11px;width:10px}
+.tree details[open]>summary::before{content:'▾'}
+.tree .schema>summary{font-weight:600}
+.tree .tbl,.tree .fn{margin-left:12px}
+.tree .tname{flex:1;cursor:pointer;color:var(--ac)}
+.tree .tname em{color:var(--mu);font-style:normal;font-size:11px}
+.tree .col{display:flex;justify-content:space-between;gap:8px;margin-left:34px;padding:1px 4px;font-size:12px}
+.tree .col .pk{color:#ffcc66}
+.tree .pad,.pad{padding:6px}
+.tiny{padding:1px 6px;font-size:11px}
+.ico{color:var(--mu)}
+.ws-main{min-width:0;padding:8px}
+.tabbar{display:flex;gap:4px;overflow-x:auto;margin-bottom:8px;padding-bottom:2px;align-items:center}
+.tab{display:flex;align-items:center;background:#1d212b;border:1px solid var(--bd);border-radius:6px;white-space:nowrap}
+.tab.on{background:var(--ac);border-color:var(--ac);color:#fff}
+.tab .tt{padding:5px 8px;cursor:pointer}
+.tab .x{padding:5px 8px 5px 2px;cursor:pointer;opacity:.7}
+.tab .x:hover{opacity:1}
+.plus{flex:none}
+.editor{width:100%;min-height:140px;resize:vertical;margin-bottom:8px}
+.row.tools{align-items:center;margin-bottom:8px}
+.row.tools .filter{min-width:200px}
+select{background:#0c0e12;border:1px solid var(--bd);color:var(--tx);border-radius:6px;padding:6px}
+button.on{background:var(--ac)!important}
+.pager{display:inline-flex;gap:4px;align-items:center}
+.pageinfo{min-width:60px;text-align:center}
+.grid{overflow:auto;max-height:62vh;border:1px solid var(--bd);border-radius:6px;margin-bottom:8px}
+.grid table{margin:0;border-collapse:separate;border-spacing:0;width:max-content;min-width:100%}
+.grid th{position:sticky;top:0;z-index:1;white-space:nowrap;background:#1d212b}
+.grid th.sortable{cursor:pointer;user-select:none}
+.grid td{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.grid td.null{color:var(--mu);font-style:italic}
+.grid .rn{color:var(--mu);text-align:right;background:#14171d;position:sticky;left:0}
+.grid th.rn{z-index:2}
+.inspector{background:#0c0e12;border:1px solid var(--bd);border-radius:6px;padding:8px;margin-bottom:8px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto;font:12px ui-monospace,Menlo,monospace}
+.history{border:1px solid var(--bd);border-radius:6px;margin-bottom:8px;max-height:200px;overflow:auto}
+.hitem{padding:5px 8px;cursor:pointer;font:12px ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hitem:hover{background:#1d212b}
+.struct h3{font-size:13px;color:var(--mu);margin:12px 0 6px}
+.idxlist .mono{padding:3px 0}
+#logCard #log{margin-top:10px}
+
+@media (max-width:820px){
+  main{padding:12px}
+  main.wide{padding:8px}
+  .ws-body{grid-template-columns:1fr}
+  .side-toggle{display:inline-block}
+  .ws-side{position:fixed;z-index:20;top:0;bottom:0;left:0;width:82%;max-width:320px;max-height:none;background:var(--card);box-shadow:4px 0 24px #000a;transform:translateX(-105%);transition:transform .18s;padding-top:14px}
+  .ws-side.open{transform:none}
+  .grid{max-height:55vh}
+  .row.tools .filter{min-width:100%}
+  .editor{min-height:120px}
+}

@@ -10,6 +10,12 @@ PostgreSQL (PGlite/WASM) yang jalan penuh di browser. Datanya dibagi antar user 
 - **Snapshot** (dump terenkripsi) dikirim berkala (tiap 50 write per klien, atau tombol Snapshot). User baru memulihkan snapshot terakhir lalu replay sisa log.
 - **Connection string:** `tgpg://<invite>#<kunci>`. Invite = link undangan grup, kunci = kunci enkripsi 256-bit. Siapa pun yang memegangnya bisa membaca dan menulis.
 
+## Antarmuka (ala pgAdmin)
+- **Sidebar objek:** schema → tabel/view → kolom (tipe, PK), plus fungsi. Klik nama tabel untuk membuka datanya, tombol `SQL` untuk membuka tab query berisi `select *`.
+- **Tab tabel:** data grid dengan sort (klik header), paginasi, filter `WHERE`, inspector sel, tab **Struktur** (kolom, default, index), export CSV/JSON.
+- **Tab query:** banyak tab, `Ctrl+Enter`, jalankan sebagian (blok teks), hasil multi-statement, waktu eksekusi, riwayat, export hasil.
+- Sidebar menyegarkan diri saat ada DDL, baik dari kamu maupun dari user lain. Di layar kecil sidebar menjadi drawer.
+
 ## Deploy ke GitHub Pages
 1. Push repo ini ke GitHub (branch `main`).
 2. Settings → Pages → Source: **GitHub Actions**.

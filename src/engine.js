@@ -153,6 +153,14 @@ export class Engine {
     }));
   }
 
+  /** Query read-only berparameter (untuk UI: katalog, paginasi). */
+  query(sql, params = []) {
+    return this.serial(() => this.db.transaction(async tx => {
+      await tx.exec('set transaction read only');
+      return tx.query(sql, params);
+    }));
+  }
+
   async write(sql, { timeoutMs = 30000 } = {}) {
     const op = { v: 1, sql: rewrite(sql), a: this.author, t: new Date().toISOString(), cid: this.cid };
     const plain = new TextEncoder().encode(JSON.stringify(op));

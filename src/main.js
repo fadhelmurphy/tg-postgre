@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { b64u, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
 import { Engine } from './engine.js';
 import { connectClient, createChannel, resolveInvite, TelegramTransport } from './telegram.js';
+import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
 const show = (id, on = true) => { $(id).hidden = !on; };
@@ -25,6 +26,25 @@ let PASS = null;
 let client = null;
 let engine = null, current = null, syncTimer = null;
 const heldLocks = new Set();
+
+const ws = new Workspace($('c-work'), {
+  onSync: () => engine?.sync(),
+  onSnapshot: async () => {
+    try { const r = await engine?.snapshot(); if (!r) log('Tidak ada perubahan sejak snapshot terakhir.'); }
+    catch (e) { log('Snapshot gagal: ' + errMsg(e), 'er'); }
+  },
+  onReset: () => resetLocal().catch(e => log('Gagal: ' + errMsg(e), 'er')),
+  onClose: () => closeDatabase(),
+  getConn: () => current?.conn || '',
+});
+
+function showHome(on) {
+  show('c-db', on); show('c-work', !on);
+  document.querySelector('main').classList.toggle('wide', !on);
+}
+async function closeDatabase() {
+  ws.close(); await closeEngine(); current = null; showHome(true);
+}
 
 const persist = () => saveVault(PASS, V);
 
@@ -124,14 +144,14 @@ async function openDatabase(chat, rawKey, conn) {
   });
   LS.set(initKey, '1');
   current = { chat, rawKey, conn, dbId };
-  engine.onApplied = n => { $('stat').textContent = `· log #${n}`; };
-  engine.onApplied(engine.lastApplied);
+  engine.onApplied = n => ws.notifyApplied(n);
   syncTimer = setInterval(() => engine.sync(), 15000);   // jaga-jaga bila ada update yang terlewat
 
   V.dbs = V.dbs || {}; V.dbs[dbId] = { conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
   await persist(); renderSaved();
-  $('shareStr').textContent = conn; show('shareBox'); show('c-sql');
-  if (!$('sql').value) $('sql').value = `create table if not exists notes(\n  id uuid primary key default gen_random_uuid(),\n  body text,\n  created_at timestamptz default now()\n);\ninsert into notes(body) values ('halo dari tgpg');`;
+  await ws.open({ engine, dbId, title: V.dbs[dbId].title });
+  engine.onApplied(engine.lastApplied);
+  showHome(false);
   log('Database siap. Posisi log #' + engine.lastApplied, 'ok');
 }
 
@@ -161,42 +181,6 @@ async function wipeAll() {
   deleteVault(); location.reload();
 }
 
-/* ───────── SQL ───────── */
-function renderResults(res) {
-  const out = $('out'); out.replaceChildren();
-  for (const x of Array.isArray(res) ? res : [res]) {
-    if (!x) continue;
-    if (x.error) { const d = document.createElement('div'); d.className = 'er'; d.textContent = x.error; out.appendChild(d); continue; }
-    if (!x.fields || !x.fields.length) {
-      const d = document.createElement('div'); d.className = 'mu';
-      d.textContent = 'OK' + (x.affectedRows != null ? ` · ${x.affectedRows} baris` : ''); out.appendChild(d); continue;
-    }
-    const t = document.createElement('table'), head = t.insertRow();
-    for (const f of x.fields) { const th = document.createElement('th'); th.textContent = f.name; head.appendChild(th); }
-    for (const r of x.rows.slice(0, 1000)) {
-      const tr = t.insertRow();
-      for (const f of x.fields) {
-        const v = r[f.name];
-        tr.insertCell().textContent = v == null ? 'NULL' : typeof v === 'object' ? JSON.stringify(v) : String(v);
-      }
-    }
-    out.appendChild(t);
-    if (x.rows.length > 1000) { const d = document.createElement('div'); d.className = 'mu'; d.textContent = `Menampilkan 1000 dari ${x.rows.length} baris.`; out.appendChild(d); }
-  }
-}
-
-async function run() {
-  const sql = $('sql').value.trim();
-  if (!sql || !engine) return;
-  $('btnRun').disabled = true;
-  try {
-    const r = await engine.run(sql);
-    if (r.kind === 'write') log(`Write diterapkan sebagai #${r.id}`, 'ok');
-    renderResults(r.result);
-  } catch (e) { renderResults({ error: errMsg(e) }); }
-  $('btnRun').disabled = false;
-}
-
 /* ───────── wiring ───────── */
 const guard = fn => () => fn().catch(e => log('Gagal: ' + errMsg(e), 'er'));
 $('btnUnlock').onclick = unlock;
@@ -205,12 +189,6 @@ $('btnWipe').onclick = wipeAll;
 $('btnLogin').onclick = login;
 $('btnCreate').onclick = guard(createDatabase);
 $('btnConnect').onclick = guard(() => connectString($('connStr').value));
-$('btnRun').onclick = run;
-$('btnSync').onclick = guard(async () => { await engine?.sync(); });
-$('btnSnap').onclick = guard(async () => { const s = await engine?.snapshot(); if (!s) log('Tidak ada perubahan sejak snapshot terakhir.'); });
-$('btnReset').onclick = guard(resetLocal);
-$('btnCopy').onclick = () => navigator.clipboard.writeText($('shareStr').textContent).then(() => log('Disalin.', 'ok'));
-$('sql').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run(); });
 
 if (hasVault()) show('c-unlock'); else show('c-login');
 if (!window.isSecureContext) log('Halaman harus dibuka lewat HTTPS (atau localhost).', 'er');
