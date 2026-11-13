@@ -19,7 +19,8 @@ class FakeServer {
   broadcast(msg) { for (const c of this.clients) for (const h of c.handlers) h.cb({ message: msg }); }
 }
 class FakeClient {
-  constructor(server) { this.s = server; this.handlers = []; this.connected = true; this.connects = 0; server.clients.add(this); }
+  constructor(server) { this.s = server; this.uid = server.clients.size + 100; this.handlers = []; this.connected = true; this.connects = 0; server.clients.add(this); }
+  async getMe() { return { id: this.uid }; }
   async connect() { this.connected = true; this.connects++; return true; }
   async getMessages(entity, o = {}) {
     let list = [...this.s.msgs];
@@ -28,10 +29,10 @@ class FakeClient {
     else list = list.sort((a, b) => b.id - a.id);
     return list.slice(0, o.limit ?? 1);
   }
-  async sendMessage(entity, { message }) { const m = this.s.add({ message }); queueMicrotask(() => this.s.broadcast(m)); return m; }
+  async sendMessage(entity, { message }) { const m = this.s.add({ message, senderId: this.uid }); queueMicrotask(() => this.s.broadcast(m)); return m; }
   async sendFile(entity, { file, caption }) {
     if (!(file instanceof CustomFile) || !Buffer.isBuffer(file.buffer) || file.size !== file.buffer.length) throw new Error('CustomFile tidak valid');
-    const m = this.s.add({ message: caption, media: { document: true } });
+    const m = this.s.add({ message: caption, media: { document: true }, senderId: this.uid });
     this.s.files.set(m.id, Buffer.from(file.buffer));
     queueMicrotask(() => this.s.broadcast(m)); return m;
   }
@@ -59,7 +60,7 @@ describe('TelegramTransport + Engine (klien GramJS tiruan)', () => {
     expect(qa).toHaveLength(3);
     expect(qb).toEqual(qa);
     expect(a.lastApplied).toBe(b.lastApplied);
-    expect(s.msgs.some(m => m.media && m.message === 'TGPG-OP')).toBe(true);
+    expect(s.msgs.some(m => m.media && m.message.startsWith('TGPG-OP'))).toBe(true);
     await a.close(); await b.close();
   });
 

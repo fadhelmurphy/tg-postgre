@@ -1,9 +1,9 @@
 import './style.css';
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
-import { b64u, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
+import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, inviteUser, TelegramTransport } from './telegram.js';
+import { connectClient, createChannel, resolveInvite, inviteUser, kickUser, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -37,6 +37,12 @@ const ws = new Workspace($('c-work'), {
   onReset: () => resetLocal().catch(e => log('Gagal: ' + errMsg(e), 'er')),
   onClose: () => closeDatabase(),
   getConn: () => current?.conn || '',
+  onApprove: sid => engine.approve(sid),
+  onRevoke: async sid => {
+    const r = await engine.rotate({ remove: [sid] });
+    try { await kickUser(client, current.chat, sid); } catch (e) { log('Tidak bisa mengeluarkan dari grup Telegram (' + errMsg(e) + '); kunci tetap sudah dirotasi.', 'er'); }
+    return r;
+  },
   onInvite: async (username, sendKey) => {
     if (!current) throw new Error('Tidak ada database terbuka.');
     return inviteUser(client, current.chat, username, { connStr: current.conn, sendKey });
@@ -149,18 +155,23 @@ async function openDatabase(chat, rawKey, conn) {
       await db.waitReady; return db;
     }
   };
+  if (!V.identity) { const id = await genIdentity(); V.identity = { jwk: id.jwk, pub: id.pub }; await persist(); }
+  const identity = await loadIdentity(V.identity);
+  V.dbs = V.dbs || {};
+  const rec = V.dbs[dbId] = { ...(V.dbs[dbId] || {}), conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
   log('Membuka database…');
   engine = await Engine.open({
     transport: new TelegramTransport(client, chat), key, createDb, hasLocal: !!LS.get(initKey),
-    author: V.name, log,
+    author: V.name, log, identity, keys: rec.keys, onKeys: k => { rec.keys = k; persist().catch(() => {}); },
   });
   LS.set(initKey, '1');
   current = { chat, rawKey, conn, dbId };
   engine.onApplied = n => ws.notifyApplied(n);
   engine.onSync = (ok, err) => ws.setSyncState(ok, err);
+  engine.onBlocked = b => ws.setBlocked(b);
+  ws.setBlocked(engine.blocked);
   syncTimer = setInterval(() => engine.sync(), 15000);   // jaga-jaga bila ada update yang terlewat
 
-  V.dbs = V.dbs || {}; V.dbs[dbId] = { conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
   await persist(); renderSaved();
   await ws.open({ engine, dbId, title: V.dbs[dbId].title });
   engine.onApplied(engine.lastApplied);

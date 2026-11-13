@@ -60,3 +60,10 @@ npm run build    # output di dist/
 - Throughput rendah (batas rate Telegram). Rotasi kunci belum ada. Risiko ToS Telegram untuk pemakaian berat.
 
 - **Undang @username**: tombol di panel Bagikan menambahkan user ke grup (dan opsional DM connection string — Telegram bisa melihat DM itu). Belum diuji ke Telegram asli; privasi target dapat menolak.
+
+## Mencabut akses (rotasi kunci)
+
+- Tiap anggota punya identitas ECDH (P-256) di vault lokal; kunci publiknya didaftarkan di log (`hello`). ID pengirim dari Telegram tidak bisa dipalsukan, jadi dipakai sebagai identitas anggota.
+- **Owner** = pengirim pesan TGPG pertama di grup (pembuat database). Di panel **Anggota**, owner bisa **Cabut** (kunci baru dibungkus hanya untuk anggota yang tersisa, user dikeluarkan dari grup, op darinya ditolak semua klien) dan **Setujui** (anggota baru setelah rotasi mendapat kunci).
+- Setelah rotasi, siapa pun yang hanya punya connection string lama hanya bisa membaca data sampai titik rotasi.
+- **Batas**: yang dicabut tetap memegang data yang pernah ia lihat (tidak bisa ditarik kembali). Bila owner kehilangan vault (identitas), ia tidak bisa merotasi lagi. Anggota yang tidak pernah `hello` (klien lama) tidak ikut menerima kunci baru. Tidak ada transfer kepemilikan.

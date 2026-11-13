@@ -27,6 +27,28 @@ export async function decrypt(key, bytes) {
   return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u8.subarray(0, 12) }, key, u8.subarray(12)));
 }
 
+/* ── identitas ECDH per anggota + pembungkusan kunci (rotasi kunci) ── */
+const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
+export async function genIdentity() {
+  const kp = await crypto.subtle.generateKey(ECDH, true, ['deriveKey']);
+  return { priv: kp.privateKey, pub: b64.enc(new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey))),
+    jwk: await crypto.subtle.exportKey('jwk', kp.privateKey) };
+}
+export async function loadIdentity({ jwk, pub }) {
+  return { priv: await crypto.subtle.importKey('jwk', jwk, ECDH, true, ['deriveKey']), pub, jwk };
+}
+async function shared(priv, pubRaw) {
+  const pub = await crypto.subtle.importKey('raw', pubRaw, ECDH, false, []);
+  return crypto.subtle.deriveKey({ name: 'ECDH', public: pub }, priv, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+/** Bungkus bytes agar hanya pemilik kunci privat untuk pubB64 yang bisa membukanya. */
+export async function wrapFor(pubB64, bytes) {
+  const eph = await crypto.subtle.generateKey(ECDH, false, ['deriveKey']);
+  const e = new Uint8Array(await crypto.subtle.exportKey('raw', eph.publicKey));
+  return { e: b64.enc(e), c: b64.enc(await encrypt(await shared(eph.privateKey, b64.dec(pubB64)), bytes)) };
+}
+export async function unwrap(priv, w) { return decrypt(await shared(priv, b64.dec(w.e)), b64.dec(w.c)); }
+
 /* ── vault: data sensitif lokal (session Telegram + kunci database) dienkripsi passphrase ── */
 const VAULT_KEY = 'tgpg:vault';
 const ITER = 250000;

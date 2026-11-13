@@ -126,6 +126,16 @@ with sync_playwright() as p:
     ck('undang: error tampil', 'tidak ditemukan' in pg.inner_text('.invite'))
     pg.locator('button', has_text='Bagikan').click()
 
+    # ── anggota: daftar, cabut akses
+    pg.locator('button', has_text='Anggota').click(); pg.wait_for_timeout(300)
+    ck('anggota: owner & member tampil', 'owner' in pg.inner_text('.members') and 'Budi' in pg.inner_text('.members'), pg.inner_text('.members'))
+    cabut = pg.locator('.members button', has_text='Cabut'); cabut.click(); pg.wait_for_timeout(100)
+    ck('cabut butuh konfirmasi', 'Yakin' in pg.inner_text('.members'))
+    pg.locator('.members button', has_text='Yakin').click(); pg.wait_for_timeout(1500)
+    ck('anggota dicabut', 'dicabut' in pg.inner_text('.members'), pg.inner_text('.members'))
+    ck('pesan sukses cabut', 'dirotasi' in pg.inner_text('.ws-share:not([hidden]) .ok') if pg.locator('.ws-share:not([hidden]) .ok').count() else False)
+    pg.locator('button', has_text='Anggota').click()
+
     # ── offline / online
     pg.locator('button', has_text='Sinkron').first.click(); pg.wait_for_timeout(500)
     ck('chip: tersinkron', '✓' in pg.inner_text('.net'), pg.inner_text('.net'))

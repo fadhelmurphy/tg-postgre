@@ -14,3 +14,10 @@ Belum pernah diuji terhadap server Telegram asli. Jalankan ini sekali sebelum di
 10. Pastikan di grup Telegram hanya ada pesan terenkripsi (tak terbaca).
 
 Catat bila ada: FLOOD_WAIT, pesan hilang/ganda, urutan beda antar klien, gagal join lewat invite. Itu titik yang belum terverifikasi.
+
+## Rotasi kunci (butuh 3 akun: A owner, B, C)
+11. A, B, C sudah gabung dan menulis. Di A: Anggota → pastikan B dan C terdaftar (aktif).
+12. A: **Cabut** C. Cek: C keluar dari grup; A dan B tetap bisa menulis & saling melihat; C tidak melihat data baru dan tidak bisa menulis (chip "menunggu persetujuan owner").
+13. Akun D gabung dengan connection string lama → status "menunggu persetujuan", tidak bisa menulis. A: **Setujui** D → D melihat semua data dan bisa menulis.
+14. Login B di browser lain (vault kosong) → data dan kunci pulih dari log/snapshot.
+Catat: pesan `TGPG-CTL` tidak hilang/terpotong, `senderId` terisi untuk semua pesan, kick (`EditBanned`) berhasil.

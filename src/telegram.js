@@ -64,12 +64,15 @@ export class TelegramTransport {
 
   async _conn() { if (!this.client.connected) await this.client.connect(); }
 
+  async selfId() { await this._conn(); return String((await this.client.getMe()).id); }
+
   _wrap(m) {
     return {
       id: m.id,
       text: m.message || '',
       hasFile: !!m.media,
       edited: !!m.editDate,
+      sender: m.senderId != null ? String(m.senderId) : '',   // id pengirim dari Telegram (tidak bisa dipalsukan anggota lain)
       download: async () => new Uint8Array(await this.client.downloadMedia(m, {})),
     };
   }
@@ -106,4 +109,12 @@ export class TelegramTransport {
     this.client.addEventHandler(handler, ev);
     return () => this.client.removeEventHandler(handler, ev);
   }
+}
+
+/** Keluarkan user dari grup (best-effort; pengaman sebenarnya adalah rotasi kunci). */
+export async function kickUser(client, chat, userId) {
+  const user = await client.getInputEntity(Number(userId));
+  await client.invoke(new Api.channels.EditBanned({
+    channel: chat, participant: user, bannedRights: new Api.ChatBannedRights({ untilDate: 0, viewMessages: true }),
+  }));
 }

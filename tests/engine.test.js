@@ -89,7 +89,7 @@ describe('engine multi-klien', () => {
     await a.write('create table big(v text)');
     const big = 'x'.repeat(20000);
     await a.write(`insert into big values ('${big}')`);
-    expect(ch.msgs.some(m => m.file && m.text === 'TGPG-OP')).toBe(true);
+    expect(ch.msgs.some(m => m.file && m.text.startsWith('TGPG-OP'))).toBe(true);
     await b.sync();
     expect((await rows(b, 'select length(v) as n from big'))[0].n).toBe(20000);
     await a.close(); await b.close();
@@ -138,7 +138,7 @@ describe('idempotensi & ketahanan', () => {
     let fail = true;
     a.transport.sendText = async text => { const id = await real(text); if (fail) { fail = false; throw new Error('Connection lost (respons hilang)'); } return id; };
     const r = await a.write(`insert into dup(v) values ('sekali')`);   // pesan terkirim, respons error → engine retry → pesan ke-2
-    expect(ch.msgs.filter(m => m.text.startsWith('TGPG1 ')).length).toBeGreaterThanOrEqual(3);
+    expect(ch.msgs.filter(m => m.text.startsWith('TGPG2 ')).length).toBeGreaterThanOrEqual(3);
     await Promise.all([a.sync(), b.sync()]);
     expect(await rows(a, 'select v from dup')).toEqual([{ v: 'sekali' }]);
     expect(await rows(b, 'select v from dup')).toEqual([{ v: 'sekali' }]);

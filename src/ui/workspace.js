@@ -53,6 +53,12 @@ export class Workspace {
     this.invUser = h('input', { type: 'text', placeholder: '@username', 'aria-label': 'Username Telegram', autocomplete: 'off' });
     this.invSend = h('input', { type: 'checkbox', id: 'inv-send' });
     this.invMsg = h('div', { class: 'mu', role: 'status' });
+    this.memList = h('div', { class: 'members' });
+    this.memMsg = h('div', { class: 'mu', role: 'status' });
+    this.memPanel = h('div', { class: 'ws-share', hidden: true },
+      h('div', { class: 'mu' }, 'Anggota database. Owner bisa menyetujui anggota baru dan mencabut akses (kunci enkripsi diganti; yang dicabut tidak bisa membaca/menulis data baru, tapi tetap menyimpan apa yang pernah ia lihat).'),
+      this.memList, this.memMsg);
+    this.blockedEl = null;
     this.sharePanel = h('div', { class: 'ws-share', hidden: true },
       h('div', { class: 'mu' }, 'Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):'), this.shareStr,
       h('button', { class: 'sec small', onClick: () => navigator.clipboard.writeText(this.shareStr.textContent) }, 'Salin'),
@@ -64,6 +70,7 @@ export class Workspace {
     const bar = h('div', { class: 'ws-bar' }, this.sideBtn, this.titleEl, this.statEl, this.netEl, h('span', { class: 'spacer' }),
       h('button', { class: 'sec small', onClick: () => this.cb.onSync() }, 'Sinkron'),
       h('button', { class: 'sec small', onClick: () => this.cb.onSnapshot() }, 'Snapshot'),
+      h('button', { class: 'sec small', onClick: () => { this.renderMembers(); this.memPanel.hidden = !this.memPanel.hidden; } }, 'Anggota'),
       h('button', { class: 'sec small', onClick: () => { this.shareStr.textContent = this.cb.getConn(); this.sharePanel.hidden = !this.sharePanel.hidden; } }, 'Bagikan'),
       h('button', { class: 'sec small', onClick: () => this.cb.onReset() }, 'Reset lokal'),
       h('button', { class: 'sec small', onClick: () => this.cb.onClose() }, 'Tutup'));
@@ -77,7 +84,7 @@ export class Workspace {
     const main = h('div', { class: 'ws-main' }, this.tabbar, this.panes);
     window.addEventListener('online', () => this.renderNet());
     window.addEventListener('offline', () => this.renderNet());
-    this.root.replaceChildren(bar, this.sharePanel, h('div', { class: 'ws-body' }, this.side, main));
+    this.root.replaceChildren(bar, this.sharePanel, this.memPanel, h('div', { class: 'ws-body' }, this.side, main));
     // di HP: sentuh di luar drawer menutupnya
     this.root.addEventListener('click', e => {
       if (this.side.classList.contains('open') && !this.side.contains(e.target) && !this.sideBtn.contains(e.target)) this.side.classList.remove('open');
@@ -132,9 +139,42 @@ export class Workspace {
     } catch (e) { this.invMsg.className = 'er'; this.invMsg.textContent = e.message || String(e); }
   }
 
+  setBlocked(b) { this.blocked = b; this.renderNet(); this.renderMembers(); }
+
+  renderMembers() {
+    const eng = this.engine; if (!eng) return;
+    const owner = eng.isOwner, out = [];
+    for (const m of eng.memberList()) {
+      const st = m.owner ? 'owner' : ({ active: 'aktif', pending: 'menunggu persetujuan', removed: 'dicabut' }[m.status] || m.status);
+      const row = h('div', { class: 'mrow' },
+        h('span', { class: 'mname' }, (m.name || 'anggota') + (m.me ? ' (Anda)' : '') + ' · id ' + m.sid),
+        h('span', { class: 'mst ' + m.status }, st));
+      if (owner && !m.owner && m.status === 'pending') row.append(h('button', { class: 'small', onClick: () => this.memAct(() => this.cb.onApprove(m.sid), 'Disetujui.') }, 'Setujui'));
+      if (owner && !m.owner && m.status !== 'removed') {
+        const b = h('button', { class: 'small danger', onClick: () => {
+          if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = 'Yakin? Klik lagi'; return; }
+          this.memAct(() => this.cb.onRevoke(m.sid), 'Akses dicabut, kunci dirotasi.');
+        } }, 'Cabut');
+        row.append(b);
+      }
+      out.push(row);
+    }
+    if (!out.length) out.push(h('div', { class: 'mu' }, 'Belum ada anggota terdaftar.'));
+    if (!owner) out.push(h('div', { class: 'mu' }, 'Hanya owner database yang bisa mengelola anggota.'));
+    this.memList.replaceChildren(...out);
+  }
+
+  async memAct(fn, okMsg) {
+    this.memMsg.className = 'mu'; this.memMsg.textContent = 'Memproses…';
+    try { await fn(); this.memMsg.className = 'ok'; this.memMsg.textContent = okMsg; }
+    catch (e) { this.memMsg.className = 'er'; this.memMsg.textContent = e.message || String(e); }
+    this.renderMembers();
+  }
+
   renderNet() {
     const el = this.netEl, st = this.syncState;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) { el.className = 'net er'; el.textContent = '⚠ offline'; el.title = 'Tidak ada koneksi. Perubahan tidak bisa dikirim; data lokal tetap bisa dibaca.'; return; }
+    if (this.blocked) { el.className = 'net er'; el.textContent = '⏳ menunggu persetujuan owner'; el.title = 'Anda belum punya kunci terbaru. Minta owner membuka Anggota → Setujui.'; return; }
     if (st.ok === false) { el.className = 'net er'; el.textContent = '⚠ gagal sinkron'; el.title = st.err; return; }
     if (st.ok === true) { el.className = 'net ok'; el.textContent = '✓ ' + new Date(st.at).toLocaleTimeString(); el.title = 'Tersinkron dengan Telegram'; return; }
     el.className = 'net mu'; el.textContent = ''; el.title = '';
@@ -143,6 +183,7 @@ export class Workspace {
   /** Dipanggil engine tiap kali sinkron: segarkan sidebar & tabel aktif bila log berubah. */
   notifyApplied(n) {
     this.statEl.textContent = `· log #${n}`;
+    if (!this.memPanel.hidden) this.renderMembers();
     if (n === this.lastSeen || !this.engine) return;
     const first = this.lastSeen === -1;
     this.lastSeen = n;
