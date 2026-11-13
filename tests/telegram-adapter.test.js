@@ -18,7 +18,8 @@ class FakeServer {
   broadcast(msg) { for (const c of this.clients) for (const h of c.handlers) h.cb({ message: msg }); }
 }
 class FakeClient {
-  constructor(server) { this.s = server; this.handlers = []; server.clients.add(this); }
+  constructor(server) { this.s = server; this.handlers = []; this.connected = true; this.connects = 0; server.clients.add(this); }
+  async connect() { this.connected = true; this.connects++; return true; }
   async getMessages(entity, o = {}) {
     let list = [...this.s.msgs];
     if (o.search) list = list.filter(m => m.message.includes(o.search));
@@ -84,6 +85,18 @@ describe('TelegramTransport + Engine (klien GramJS tiruan)', () => {
     expect(logs.join('\n')).toMatch(/dipulihkan/);
     expect((await rows(b, 'select v from k order by v')).map(r => r.v)).toEqual([1, 2]);
     await a.close(); await b.close();
+  });
+
+  it('koneksi terputus: transport menyambung ulang sebelum kirim/baca', async () => {
+    const s = new FakeServer(); const key = await importKey(randomKeyBytes());
+    const client = new FakeClient(s);
+    const a = await Engine.open({ transport: new TelegramTransport(client, { id: 1 }), key, createDb: memDb, hasLocal: false, author: 'A' });
+    client.connected = false;                                          // simulasi koneksi putus
+    await a.write('create table rc(i int)');
+    expect(client.connects).toBeGreaterThanOrEqual(1);
+    client.connected = false; await a.sync();
+    expect(client.connects).toBeGreaterThanOrEqual(2);
+    await a.close();
   });
 
   it('unsubscribe saat close melepas handler', async () => {

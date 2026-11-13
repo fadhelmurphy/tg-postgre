@@ -55,11 +55,12 @@ function cond(where) {
 }
 
 /** Satu halaman data tabel + total baris. */
-export async function fetchPage(engine, { schema, name, where = '', orderBy = null, dir = 'asc', limit = 50, offset = 0 }) {
+export async function fetchPage(engine, { schema, name, where = '', orderBy = null, dir = 'asc', limit = 50, offset = 0, pkCols = [] }) {
   const from = qname(schema, name), w = cond(where);
   const o = orderBy ? ` order by ${qi(orderBy)} ${dir === 'desc' ? 'desc' : 'asc'}` : '';
-  const [cnt, data] = await engine.read(`select count(*)::int as n from ${from}${w};\nselect * from ${from}${w}${o} limit ${limit | 0} offset ${offset | 0}`);
-  return { total: cnt.rows[0].n, fields: data.fields, rows: data.rows };
+  const pk = pkCols.map((c, i) => `, ${qi(c)}::text as __pk${i}`).join('');   // nilai PK sebagai teks (presisi penuh) untuk edit/hapus
+  const [cnt, data] = await engine.read(`select count(*)::int as n from ${from}${w};\nselect *${pk} from ${from}${w}${o} limit ${limit | 0} offset ${offset | 0}`);
+  return { total: cnt.rows[0].n, fields: data.fields.filter(f => !/^__pk\d+$/.test(f.name)), rows: data.rows };
 }
 
 /** Semua baris (untuk export), dengan filter/urutan yang sama. */
@@ -96,4 +97,39 @@ export function download(filename, text, mime) {
   const a = Object.assign(document.createElement('a'), { href: url, download: filename });
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+
+/* ───────── builder SQL untuk edit baris (nilai di-quote, bukan di-interpolasi mentah) ───────── */
+/** Literal SQL aman; null -> NULL. (standard_conforming_strings aktif: backslash literal.) */
+export const ql = v => (v === null || v === undefined ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'");
+const lit = (v, type) => (v === null ? 'NULL' : `${ql(v)}::${type}`);
+
+/** "kolom" = 'nilai-pk'::tipe untuk tiap kolom PK. pkVals: teks PK per kolom (urutan sama dengan pkCols). */
+export function pkWhere(cols, pkCols, pkVals) {
+  if (!pkCols.length) throw new Error('Tabel tidak punya primary key');
+  return pkCols.map((c, i) => {
+    const col = cols.find(x => x.name === c);
+    return `${qi(c)} = ${lit(pkVals[i], col.type)}`;
+  }).join(' and ');
+}
+
+/** values: {kolom: {mode:'value'|'null'|'default', v}} -> insert hanya kolom yang eksplisit; sisanya default DB. */
+export function buildInsert(schema, name, cols, values) {
+  const used = cols.filter(c => values[c.name] && values[c.name].mode !== 'default');
+  if (!used.length) return `insert into ${qname(schema, name)} default values`;
+  const list = used.map(c => qi(c.name)).join(', ');
+  const vals = used.map(c => (values[c.name].mode === 'null' ? 'NULL' : lit(values[c.name].v, c.type))).join(', ');
+  return `insert into ${qname(schema, name)} (${list}) values (${vals})`;
+}
+
+/** changes: {kolom: {mode:'value'|'null', v}} (hanya kolom yang berubah). */
+export function buildUpdate(schema, name, cols, pkCols, pkVals, changes) {
+  const set = cols.filter(c => changes[c.name]).map(c => `${qi(c.name)} = ${changes[c.name].mode === 'null' ? 'NULL' : lit(changes[c.name].v, c.type)}`);
+  if (!set.length) throw new Error('Tidak ada perubahan');
+  return `update ${qname(schema, name)} set ${set.join(', ')} where ${pkWhere(cols, pkCols, pkVals)}`;
+}
+
+export function buildDelete(schema, name, cols, pkCols, pkVals) {
+  return `delete from ${qname(schema, name)} where ${pkWhere(cols, pkCols, pkVals)}`;
 }

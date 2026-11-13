@@ -1,0 +1,16 @@
+name: e2e
+on: [push, pull_request]
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm test
+      - run: npm audit --omit=dev || true
+      - run: npm run build:harness
+      - run: pip install playwright && playwright install --with-deps chromium
+      - run: python3 -m http.server 4173 --directory /tmp/harness-dist &
+      - run: sleep 2 && python3 tests/e2e/ui_flow.py

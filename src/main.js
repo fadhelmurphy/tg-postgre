@@ -1,5 +1,6 @@
 import './style.css';
 import { PGlite } from '@electric-sql/pglite';
+import { PGliteWorker } from '@electric-sql/pglite/worker';
 import { b64u, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
 import { Engine } from './engine.js';
 import { connectClient, createChannel, resolveInvite, TelegramTransport } from './telegram.js';
@@ -134,8 +135,15 @@ async function openDatabase(chat, rawKey, conn) {
   const key = await importKey(rawKey);
   const initKey = 'init:' + dbId;
   const createDb = async blob => {
-    const db = new PGlite('idb://tgpg-' + dbId, blob ? { loadDataDir: blob } : undefined);
-    await db.waitReady; return db;
+    const dataDir = 'idb://tgpg-' + dbId, opts = blob ? { loadDataDir: blob } : {};
+    try {   // utama: PGlite di Web Worker (UI tidak beku)
+      const db = new PGliteWorker(new Worker(new URL('./pg.worker.js', import.meta.url), { type: 'module' }), { dataDir, ...opts });
+      await db.waitReady; return db;
+    } catch (e) {
+      log('Worker gagal (' + errMsg(e) + '), memakai mode utas utama.', 'er');
+      const db = new PGlite(dataDir, blob ? { loadDataDir: blob } : undefined);
+      await db.waitReady; return db;
+    }
   };
   log('Membuka database…');
   engine = await Engine.open({
@@ -145,6 +153,7 @@ async function openDatabase(chat, rawKey, conn) {
   LS.set(initKey, '1');
   current = { chat, rawKey, conn, dbId };
   engine.onApplied = n => ws.notifyApplied(n);
+  engine.onSync = (ok, err) => ws.setSyncState(ok, err);
   syncTimer = setInterval(() => engine.sync(), 15000);   // jaga-jaga bila ada update yang terlewat
 
   V.dbs = V.dbs || {}; V.dbs[dbId] = { conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
@@ -180,6 +189,14 @@ async function wipeAll() {
   Object.keys(localStorage).filter(k => k.startsWith('tgpg:')).forEach(k => localStorage.removeItem(k));
   deleteVault(); location.reload();
 }
+
+/* ───────── ketahanan: koneksi & error global ───────── */
+const resync = () => { if (engine && navigator.onLine !== false) engine.sync(); };
+window.addEventListener('online', () => { log('Kembali online, sinkron…', 'ok'); resync(); });
+window.addEventListener('offline', () => log('Offline. Data lokal tetap bisa dibaca; write ditunda sampai online.', 'er'));
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resync(); });
+window.addEventListener('error', e => log('Error: ' + (e.message || e.error), 'er'));
+window.addEventListener('unhandledrejection', e => log('Error: ' + errMsg(e.reason), 'er'));
 
 /* ───────── wiring ───────── */
 const guard = fn => () => fn().catch(e => log('Gagal: ' + errMsg(e), 'er'));

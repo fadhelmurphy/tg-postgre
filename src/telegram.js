@@ -44,32 +44,39 @@ export async function resolveInvite(client, hash) {
 export class TelegramTransport {
   constructor(client, entity) { this.client = client; this.entity = entity; }
 
+  async _conn() { if (!this.client.connected) await this.client.connect(); }
+
   _wrap(m) {
     return {
       id: m.id,
       text: m.message || '',
       hasFile: !!m.media,
+      edited: !!m.editDate,
       download: async () => new Uint8Array(await this.client.downloadMedia(m, {})),
     };
   }
 
   // reverse + offsetId => pesan dengan id > offsetId, urut naik (GramJS meniru Telethon)
   async listAfter(id, limit) {
+    await this._conn();
     const batch = await this.client.getMessages(this.entity, { limit, reverse: true, offsetId: id });
     return [...batch].map(m => this._wrap(m));
   }
 
   async sendText(text) {
+    await this._conn();
     return (await this.client.sendMessage(this.entity, { message: text, parseMode: undefined, linkPreview: false })).id;
   }
 
   async sendFile(bytes, caption) {
+    await this._conn();
     const buf = Buffer.from(bytes);
     const file = new CustomFile('tgpg.bin', buf.length, '', buf);
     return (await this.client.sendFile(this.entity, { file, caption, forceDocument: true, workers: 4 })).id;
   }
 
   async findSnapshot() {
+    await this._conn();
     const found = await this.client.getMessages(this.entity, { limit: 5, search: SNAP });
     const m = [...found].find(x => x.media && (x.message || '').startsWith(SNAP));
     return m ? this._wrap(m) : null;

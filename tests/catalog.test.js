@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PGlite } from '@electric-sql/pglite';
 import { Engine } from '../src/engine.js';
 import { importKey, randomKeyBytes } from '../src/crypto.js';
-import { loadCatalog, loadIndexes, fetchPage, fetchAll, toCSV, toJSON, fmt, qi } from '../src/ui/catalog.js';
+import { loadCatalog, loadIndexes, fetchPage, fetchAll, toCSV, toJSON, fmt, qi, ql, buildInsert, buildUpdate, buildDelete } from '../src/ui/catalog.js';
 import { Channel } from './memory-transport.js';
 
 const open = async () => {
@@ -65,5 +65,75 @@ describe('catalog', () => {
     expect(r.rows[0].x).toBe(42);
     await expect(e.query('create table z(i int)')).rejects.toThrow(/read-only/);
     await e.close();
+  });
+});
+
+describe('builder edit baris', () => {
+  const rowsOf = async (e, q) => (await e.read(q))[0].rows;
+  const tableOf = async (e, name) => (await loadCatalog(e)).get('public').tables.find(t => t.name === name);
+
+  it('insert/update/delete dengan PK uuid, kutip, NULL, dan default DB', async () => {
+    const e = await open();
+    await e.write(`create table people(id uuid primary key default gen_random_uuid(), name text not null, note text, age int default 18, born timestamptz default now())`);
+    const t = await tableOf(e, 'people'); const cols = t.cols;
+    expect(ql("O'Reilly")).toBe("'O''Reilly'");
+    const ins = buildInsert('public', 'people', cols, { name: { mode: 'value', v: "O'Reilly; drop table people;--" }, note: { mode: 'null' }, age: { mode: 'default' } });
+    const r1 = await e.write(ins); expect(r1.result[0].affectedRows).toBe(1);
+    const page = await fetchPage(e, { schema: 'public', name: 'people', pkCols: ['id'] });
+    expect(page.fields.map(f => f.name)).toEqual(['id', 'name', 'note', 'age', 'born']);   // __pk0 disembunyikan
+    const row = page.rows[0];
+    expect(row.name).toBe("O'Reilly; drop table people;--"); expect(row.note).toBeNull(); expect(row.age).toBe(18);
+    const upd = buildUpdate('public', 'people', cols, ['id'], [row.__pk0], { note: { mode: 'value', v: 'baru' }, age: { mode: 'value', v: '30' } });
+    const r2 = await e.write(upd); expect(r2.result[0].affectedRows).toBe(1);
+    expect((await rowsOf(e, 'select note, age from people'))[0]).toEqual({ note: 'baru', age: 30 });
+    const r3 = await e.write(buildDelete('public', 'people', cols, ['id'], [row.__pk0]));
+    expect(r3.result[0].affectedRows).toBe(1);
+    expect(await rowsOf(e, 'select count(*)::int n from people')).toEqual([{ n: 0 }]);
+    await e.close();
+  });
+
+  it('PK komposit dan timestamp mikrodetik (presisi tidak hilang lewat JS Date)', async () => {
+    const e = await open();
+    await e.write(`create table ev(tenant int, at timestamptz, v text, primary key (tenant, at))`);
+    await e.write(`insert into ev values (1, '2026-01-02 03:04:05.123456+00', 'a'), (1, '2026-01-02 03:04:05.123457+00', 'b'), (2, '2026-01-02 03:04:05.123456+00', 'c')`);
+    const t = await tableOf(e, 'ev');
+    const page = await fetchPage(e, { schema: 'public', name: 'ev', pkCols: ['tenant', 'at'], orderBy: 'v' });
+    const b = page.rows.find(r => r.v === 'b');
+    await e.write(buildUpdate('public', 'ev', t.cols, ['tenant', 'at'], [b.__pk0, b.__pk1], { v: { mode: 'value', v: 'B2' } }));
+    expect((await rowsOf(e, 'select v from ev order by v')).map(r => r.v)).toEqual(['B2', 'a', 'c']);   // hanya baris b yang berubah
+    await e.write(buildDelete('public', 'ev', t.cols, ['tenant', 'at'], [b.__pk0, b.__pk1]));
+    expect((await rowsOf(e, 'select v from ev order by v')).map(r => r.v)).toEqual(['a', 'c']);
+    await e.close();
+  });
+
+  it('kesalahan tampil sebagai error hasil (bukan crash) dan tanpa PK ditolak builder', async () => {
+    const e = await open();
+    await e.write('create table nopk(a int)'); await e.write('create table k(id int primary key, n int not null)');
+    const t = await tableOf(e, 'k');
+    const bad = await e.write(buildInsert('public', 'k', t.cols, { id: { mode: 'value', v: '1' }, n: { mode: 'null' } }));
+    expect(bad.result.error).toMatch(/not-null/);
+    const nan = await e.write(buildInsert('public', 'k', t.cols, { id: { mode: 'value', v: 'abc' }, n: { mode: 'value', v: '1' } }));
+    expect(nan.result.error).toMatch(/invalid input syntax/);
+    const np = await tableOf(e, 'nopk');
+    expect(() => buildDelete('public', 'nopk', np.cols, [], [])).toThrow(/primary key/);
+    expect(() => buildUpdate('public', 'k', t.cols, ['id'], ['1'], {})).toThrow(/Tidak ada perubahan/);
+    expect(buildInsert('public', 'k', t.cols, {})).toBe('insert into "public"."k" default values');
+    await e.close();
+  });
+
+  it('dua klien mengedit baris berbeda secara bersamaan tanpa saling menimpa', async () => {
+    const ch = new Channel(); const key = await importKey(randomKeyBytes());
+    const mk = a => Engine.open({ transport: ch.handle(), key, createDb: b => new PGlite(b ? { loadDataDir: b } : undefined), hasLocal: false, author: a });
+    const a = await mk('A'), b = await mk('B');
+    await a.write('create table r(id int primary key, x text, y text)'); await a.write(`insert into r values (1,'x0','y0')`);
+    const t = await tableOf(a, 'r');
+    await Promise.all([
+      a.write(buildUpdate('public', 'r', t.cols, ['id'], ['1'], { x: { mode: 'value', v: 'dari A' } })),
+      b.write(buildUpdate('public', 'r', t.cols, ['id'], ['1'], { y: { mode: 'value', v: 'dari B' } })),
+    ]);
+    await Promise.all([a.sync(), b.sync()]);
+    expect(await rowsOf(a, 'select x, y from r')).toEqual([{ x: 'dari A', y: 'dari B' }]);   // update per-kolom: tidak ada lost update antar kolom
+    expect(await rowsOf(b, 'select x, y from r')).toEqual(await rowsOf(a, 'select x, y from r'));
+    await a.close(); await b.close();
   });
 });

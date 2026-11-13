@@ -45,3 +45,16 @@ npm run build    # output di dist/
 - Satu database hanya bisa dibuka di satu tab per browser (Web Locks).
 - Penggunaan Telegram sebagai penyimpanan data bisa melanggar ToS bila dipakai massal. Pakai untuk skala pribadi/tim kecil.
 - Session Telegram + kunci database disimpan di localStorage terenkripsi passphrase (PBKDF2 250k iterasi). Lupa passphrase berarti harus login ulang.
+
+## Ketahanan & keamanan (ringkas)
+
+- **Idempotent**: tiap op punya `oid`; retry setelah respons hilang tidak menggandakan data.
+- **Offline**: baca lokal tetap jalan; write ditolak dengan pesan jelas; sinkron otomatis saat online/tab aktif.
+- **Edit baris**: hanya tabel dengan primary key; update per-kolom yang berubah. Tanpa optimistic locking (last-write-wins).
+- **PGlite di Web Worker** (fallback ke utas utama bila gagal). Satu tab per database (Web Locks).
+- **Vault** lokal terenkripsi passphrase; CSP ketat di build produksi; render tanpa innerHTML.
+
+### Batasan yang jujur
+- Belum diuji ke Telegram sungguhan — jalankan `SMOKE_TEST.md` dulu.
+- Semua anggota grup dipercaya penuh (bisa menulis SQL apa pun). Menghapus/mengedit pesan grup merusak log.
+- Throughput rendah (batas rate Telegram). Rotasi kunci belum ada. Risiko ToS Telegram untuk pemakaian berat.

@@ -128,3 +128,69 @@ describe('engine multi-klien', () => {
     await a.close();
   });
 });
+
+describe('idempotensi & ketahanan', () => {
+  it('retry setelah respons hilang tidak menggandakan data (op yang sama terkirim dua kali)', async () => {
+    const ch = new Channel(); const key = await importKey(randomKeyBytes());
+    const a = await open(ch, key, 'A'), b = await open(ch, key, 'B');
+    await a.write('create table dup(id serial primary key, v text)');
+    const real = a.transport.sendText.bind(a.transport);
+    let fail = true;
+    a.transport.sendText = async text => { const id = await real(text); if (fail) { fail = false; throw new Error('Connection lost (respons hilang)'); } return id; };
+    const r = await a.write(`insert into dup(v) values ('sekali')`);   // pesan terkirim, respons error → engine retry → pesan ke-2
+    expect(ch.msgs.filter(m => m.text.startsWith('TGPG1 ')).length).toBeGreaterThanOrEqual(3);
+    await Promise.all([a.sync(), b.sync()]);
+    expect(await rows(a, 'select v from dup')).toEqual([{ v: 'sekali' }]);
+    expect(await rows(b, 'select v from dup')).toEqual([{ v: 'sekali' }]);
+    expect(r.result[0].affectedRows).toBe(1);               // hasil op pertama dikembalikan, bukan "duplicate"
+    await a.close(); await b.close();
+  });
+
+  it('error permanen (mis. tidak boleh menulis) tidak di-retry', async () => {
+    const ch = new Channel(); const key = await importKey(randomKeyBytes());
+    const a = await open(ch, key, 'A');
+    let calls = 0;
+    a.transport.sendText = async () => { calls++; const e = new Error('x'); e.errorMessage = 'CHAT_WRITE_FORBIDDEN'; throw e; };
+    await expect(a.write('select 1 into z')).rejects.toThrow();
+    expect(calls).toBe(1);
+    await a.close();
+  });
+
+  it('tabel dedupe ikut snapshot dan klien hasil restore tetap konvergen', async () => {
+    const ch = new Channel(); const key = await importKey(randomKeyBytes());
+    const a = await open(ch, key, 'A');
+    await a.write('create table s(v int)'); await a.write('insert into s values (1)');
+    await a.snapshot();
+    const c = await open(ch, key, 'C');
+    expect((await rows(c, 'select count(*)::int n from _tgpg_seen'))[0].n).toBeGreaterThanOrEqual(2);
+    await c.write('insert into s values (2)'); await a.sync();
+    expect(await rows(a, 'select v from s order by v')).toEqual(await rows(c, 'select v from s order by v'));
+    await a.close(); await c.close();
+  });
+
+  it('pesan yang diedit memunculkan peringatan sekali', async () => {
+    const ch = new Channel(); const key = await importKey(randomKeyBytes());
+    const logs = [];
+    const a = await open(ch, key, 'A', { log: m => logs.push(m) });
+    await a.write('create table e(i int)');
+    ch.msgs[ch.msgs.length - 1].edited = true;
+    const b = await open(ch, key, 'B', { log: m => logs.push(m) });
+    expect(logs.filter(l => /pernah diedit/.test(l))).toHaveLength(1);
+    await a.close(); await b.close();
+  });
+});
+
+describe('callback sinkron', () => {
+  it('onSync(true) setelah sukses dan onSync(false, err) bila transport gagal', async () => {
+    const ch = new Channel(); const key = await importKey(randomKeyBytes());
+    const a = await open(ch, key, 'A'); const calls = [];
+    a.onSync = (ok, err) => calls.push([ok, err?.message]);
+    await a.sync();
+    const real = a.transport.listAfter.bind(a.transport);
+    a.transport.listAfter = async () => { throw new Error('jaringan putus'); };
+    await a.sync();
+    a.transport.listAfter = real; await a.sync();
+    expect(calls).toEqual([[true, undefined], [false, 'jaringan putus'], [true, undefined]]);
+    await a.close();
+  });
+});

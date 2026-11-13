@@ -8,7 +8,7 @@ export class Channel {
 }
 class MemoryTransport {
   constructor(ch) { this.ch = ch; }
-  _wrap(m) { return { id: m.id, text: m.text, hasFile: !!m.file, download: async () => new Uint8Array(m.file) }; }
+  _wrap(m) { return { id: m.id, text: m.text, hasFile: !!m.file, edited: !!m.edited, download: async () => new Uint8Array(m.file) }; }
   async listAfter(id, limit) { return this.ch.msgs.filter(m => m.id > id).slice(0, limit).map(m => this._wrap(m)); }
   async sendText(text) { const m = this.ch.push({ text }); queueMicrotask(() => this.ch.notify()); return m.id; }
   async sendFile(bytes, caption) { const m = this.ch.push({ text: caption, file: bytes }); queueMicrotask(() => this.ch.notify()); return m.id; }

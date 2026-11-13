@@ -93,3 +93,18 @@ button.on{background:var(--ac)!important}
   .row.tools .filter{min-width:100%}
   .editor{min-height:120px}
 }
+
+/* ───────── edit baris ───────── */
+.grid th.act,.grid td.act{position:sticky;right:0;background:#14171d;text-align:center}
+.acts{display:inline-flex;gap:4px}
+button.danger:hover{background:#5a2323}
+.backdrop{position:fixed;inset:0;background:#000a;z-index:50;display:flex;align-items:center;justify-content:center;padding:12px}
+.dialog{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;width:min(640px,100%);max-height:90vh;overflow:auto}
+.dialog h3{margin:0 0 10px;font-size:15px}
+.fields{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}
+.frow{display:grid;grid-template-columns:1fr auto;gap:4px 8px;align-items:start}
+.frow .fname{grid-column:1 / -1;font-size:12px}
+.frow .fld{min-height:36px;resize:vertical;font-family:ui-monospace,Menlo,monospace;font-size:13px;min-width:0}
+.nullbox{font-size:12px;color:var(--mu);white-space:nowrap;padding-top:8px}
+.nullbox input{flex:none;min-width:0;width:auto;padding:0;margin:0 4px 0 0;vertical-align:middle}
+.net{font-size:12px;white-space:nowrap}

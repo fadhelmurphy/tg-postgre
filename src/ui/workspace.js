@@ -1,6 +1,6 @@
 // Workspace ala pgAdmin: sidebar objek, tab query & tab tabel (data grid + struktur), riwayat, export.
 import { h } from './dom.js';
-import { KIND_LABEL, loadCatalog, loadIndexes, fetchPage, fetchAll, fmt, qname, toCSV, toJSON, download } from './catalog.js';
+import { KIND_LABEL, loadCatalog, loadIndexes, fetchPage, fetchAll, fmt, qname, toCSV, toJSON, download, buildInsert, buildUpdate, buildDelete } from './catalog.js';
 
 const STARTER = `create table if not exists notes(
   id uuid primary key default gen_random_uuid(),
@@ -12,12 +12,13 @@ const HISTORY_MAX = 50;
 const errMsg = e => e?.message || String(e);
 
 /** Render tabel hasil/data. onSort(col) opsional, onCell(col, value) opsional. */
-function renderGrid(fields, rows, { startIndex = 0, sort = null, onSort = null, onCell = null } = {}) {
+function renderGrid(fields, rows, { startIndex = 0, sort = null, onSort = null, onCell = null, actions = null } = {}) {
   const head = h('tr', null, h('th', { class: 'rn' }, '#'));
   for (const f of fields) {
     head.append(h('th', { class: onSort ? 'sortable' : '', onClick: onSort ? () => onSort(f.name) : null },
       f.name, sort && sort.col === f.name ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''));
   }
+  if (actions) head.append(h('th', { class: 'act' }, ''));
   const body = h('tbody');
   rows.forEach((r, i) => {
     const tr = h('tr', null, h('td', { class: 'rn' }, startIndex + i + 1));
@@ -25,6 +26,7 @@ function renderGrid(fields, rows, { startIndex = 0, sort = null, onSort = null, 
       const v = fmt(r[f.name]);
       tr.append(h('td', { class: v === null ? 'null' : '', title: v === null ? 'NULL' : v.slice(0, 200), onClick: onCell ? () => onCell(f.name, v) : null }, v === null ? 'NULL' : v));
     }
+    if (actions) tr.append(h('td', { class: 'act' }, actions(r)));
     body.append(tr);
   });
   return h('div', { class: 'grid' }, h('table', null, h('thead', null, head), body));
@@ -44,12 +46,14 @@ export class Workspace {
   build() {
     this.titleEl = h('b', { class: 'ws-title' });
     this.statEl = h('span', { class: 'mu' });
+    this.netEl = h('span', { class: 'net', role: 'status' });
+    this.syncState = { ok: null, at: 0, err: '' };
     this.sideBtn = h('button', { class: 'sec small side-toggle', title: 'Objek', onClick: () => this.side.classList.toggle('open') }, '☰');
     this.shareStr = h('span', { class: 'mono' });
     this.sharePanel = h('div', { class: 'ws-share', hidden: true },
       h('div', { class: 'mu' }, 'Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):'), this.shareStr,
       h('button', { class: 'sec small', onClick: () => navigator.clipboard.writeText(this.shareStr.textContent) }, 'Salin'));
-    const bar = h('div', { class: 'ws-bar' }, this.sideBtn, this.titleEl, this.statEl, h('span', { class: 'spacer' }),
+    const bar = h('div', { class: 'ws-bar' }, this.sideBtn, this.titleEl, this.statEl, this.netEl, h('span', { class: 'spacer' }),
       h('button', { class: 'sec small', onClick: () => this.cb.onSync() }, 'Sinkron'),
       h('button', { class: 'sec small', onClick: () => this.cb.onSnapshot() }, 'Snapshot'),
       h('button', { class: 'sec small', onClick: () => { this.shareStr.textContent = this.cb.getConn(); this.sharePanel.hidden = !this.sharePanel.hidden; } }, 'Bagikan'),
@@ -63,6 +67,8 @@ export class Workspace {
     this.tabbar = h('div', { class: 'tabbar' });
     this.panes = h('div', { class: 'panes' });
     const main = h('div', { class: 'ws-main' }, this.tabbar, this.panes);
+    window.addEventListener('online', () => this.renderNet());
+    window.addEventListener('offline', () => this.renderNet());
     this.root.replaceChildren(bar, this.sharePanel, h('div', { class: 'ws-body' }, this.side, main));
     // di HP: sentuh di luar drawer menutupnya
     this.root.addEventListener('click', e => {
@@ -100,6 +106,20 @@ export class Workspace {
     } catch {}
   }
   saveSoon() { clearTimeout(this.saveTimer); this.saveTimer = setTimeout(() => this.save(), 800); }
+
+  /** Dipanggil setelah tiap sinkron (ok=true/false). */
+  setSyncState(ok, err) {
+    this.syncState = { ok, at: ok ? Date.now() : this.syncState.at, err: err ? (err.message || String(err)) : '' };
+    this.renderNet();
+  }
+
+  renderNet() {
+    const el = this.netEl, st = this.syncState;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { el.className = 'net er'; el.textContent = '⚠ offline'; el.title = 'Tidak ada koneksi. Perubahan tidak bisa dikirim; data lokal tetap bisa dibaca.'; return; }
+    if (st.ok === false) { el.className = 'net er'; el.textContent = '⚠ gagal sinkron'; el.title = st.err; return; }
+    if (st.ok === true) { el.className = 'net ok'; el.textContent = '✓ ' + new Date(st.at).toLocaleTimeString(); el.title = 'Tersinkron dengan Telegram'; return; }
+    el.className = 'net mu'; el.textContent = ''; el.title = '';
+  }
 
   /** Dipanggil engine tiap kali sinkron: segarkan sidebar & tabel aktif bila log berubah. */
   notifyApplied(n) {
@@ -272,7 +292,7 @@ export class Workspace {
       ...[25, 50, 100, 500].map(n => h('option', { value: n, selected: n === 50 }, `${n}/hal`)));
     const mk = (label, fn, title) => h('button', { class: 'sec small', title, onClick: fn }, label);
     const tab = this.makeTab('table', name, h('div', { class: 'pane' }), {
-      schema, name, page: 0, size: 50, sort: null, where: '', view: 'data', total: 0, fields: [], rows: [], gridBox, struct, insp, status, pageInfo,
+      ws: this, schema, name, page: 0, size: 50, sort: null, where: '', view: 'data', total: 0, fields: [], rows: [], gridBox, struct, insp, status, pageInfo,
     });
     const apply = () => { tab.where = filter.value; tab.page = 0; this.loadTable(tab); };
     const maxPage = () => Math.max(0, Math.ceil(tab.total / tab.size) - 1);
@@ -280,7 +300,8 @@ export class Workspace {
     const dataBtn = mk('Data', () => this.setView(tab, 'data')), structBtn = mk('Struktur', () => this.setView(tab, 'struct'));
     tab.dataBtn = dataBtn; tab.structBtn = structBtn; dataBtn.classList.add('on');
     tab.pager = h('span', { class: 'pager' }, mk('«', () => go(0)), mk('‹', () => go(tab.page - 1)), pageInfo, mk('›', () => go(tab.page + 1)), mk('»', () => go(maxPage())));
-    tab.dataTools = h('div', { class: 'row tools' }, filter, mk('Terapkan', apply), mk('↻', () => this.loadTable(tab), 'Muat ulang'), size, tab.pager,
+    tab.addBtn = mk('+ Baris', () => this.openRowDialog(tab, 'insert', null), 'Tambah baris');
+    tab.dataTools = h('div', { class: 'row tools' }, filter, mk('Terapkan', apply), mk('↻', () => this.loadTable(tab), 'Muat ulang'), size, tab.pager, tab.addBtn,
       mk('CSV', () => this.exportTable(tab, 'csv')), mk('JSON', () => this.exportTable(tab, 'json')));
     tab.pane.append(
       h('div', { class: 'row tools' }, h('b', null, `${schema}.${name}`), h('span', { class: 'spacer' }), dataBtn, structBtn, status),
@@ -298,27 +319,118 @@ export class Workspace {
     if (view === 'struct') this.renderStruct(tab); else this.loadTable(tab);
   }
 
+  tableMeta(tab) {
+    const t = this.catalog.get(tab.schema)?.tables.find(x => x.name === tab.name);
+    const cols = t?.cols || [];
+    const pkCols = cols.filter(c => c.pk).map(c => c.name);
+    return { t, cols, pkCols, editable: !!t && (t.kind === 'r' || t.kind === 'p') && pkCols.length > 0 };
+  }
+
   async loadTable(tab) {
     if (!this.engine || tab.view !== 'data') return;
     tab.status.textContent = 'Memuat…';
     try {
-      let r = await fetchPage(this.engine, { schema: tab.schema, name: tab.name, where: tab.where, orderBy: tab.sort?.col, dir: tab.sort?.dir, limit: tab.size, offset: tab.page * tab.size });
+      const meta = this.tableMeta(tab);
+      const q = () => ({ schema: tab.schema, name: tab.name, where: tab.where, orderBy: tab.sort?.col, dir: tab.sort?.dir, limit: tab.size, offset: tab.page * tab.size, pkCols: meta.editable ? meta.pkCols : [] });
+      let r = await fetchPage(this.engine, q());
       const last = Math.max(0, Math.ceil(r.total / tab.size) - 1);
-      if (tab.page > last) { tab.page = last; r = await fetchPage(this.engine, { schema: tab.schema, name: tab.name, where: tab.where, orderBy: tab.sort?.col, dir: tab.sort?.dir, limit: tab.size, offset: tab.page * tab.size }); }
+      if (tab.page > last) { tab.page = last; r = await fetchPage(this.engine, q()); }
+      tab.addBtn.disabled = !meta.editable;
+      tab.addBtn.title = meta.editable ? 'Tambah baris' : (meta.t && meta.t.kind !== 'r' && meta.t.kind !== 'p' ? 'View: hanya-baca' : 'Tabel tanpa primary key: hanya-baca');
       Object.assign(tab, { total: r.total, fields: r.fields, rows: r.rows });
       tab.gridBox.replaceChildren(r.fields.length
         ? renderGrid(r.fields, r.rows, {
           startIndex: tab.page * tab.size, sort: tab.sort,
           onSort: col => { tab.sort = tab.sort?.col === col ? (tab.sort.dir === 'asc' ? { col, dir: 'desc' } : null) : { col, dir: 'asc' }; tab.page = 0; this.loadTable(tab); },
           onCell: (c, v) => { tab.insp.hidden = false; tab.insp.replaceChildren(h('b', null, c + ': '), v === null ? h('em', null, 'NULL') : v); },
+          actions: meta.editable ? row => h('span', { class: 'acts' },
+            h('button', { class: 'sec tiny', title: 'Edit baris', 'aria-label': 'Edit baris', onClick: () => this.openRowDialog(tab, 'edit', row) }, '✎'),
+            h('button', { class: 'sec tiny danger', title: 'Hapus baris', 'aria-label': 'Hapus baris', onClick: () => this.deleteRow(tab, row) }, '🗑')) : null,
         })
         : h('div', { class: 'mu pad' }, 'Tabel tidak punya kolom.'));
       if (!r.rows.length) tab.gridBox.append(h('div', { class: 'mu pad' }, tab.where ? 'Tidak ada baris yang cocok dengan filter.' : 'Tabel kosong.'));
       tab.pageInfo.textContent = `${tab.page + 1} / ${last + 1}`;
-      tab.status.textContent = `${r.total} baris`;
+      tab.status.textContent = `${r.total} baris${meta.editable ? '' : ' · hanya-baca'}`;
     } catch (e) {
       tab.gridBox.replaceChildren(h('div', { class: 'er' }, errMsg(e)));
       tab.status.textContent = '';
+    }
+  }
+
+  /* ───────── edit baris ───────── */
+  async deleteRow(tab, row) {
+    const { cols, pkCols } = this.tableMeta(tab);
+    const pkVals = pkCols.map((c, i) => row['__pk' + i]);
+    if (!confirm(`Hapus baris ini dari ${tab.schema}.${tab.name}?\n${pkCols.map((c, i) => `${c} = ${pkVals[i]}`).join(', ')}`)) return;
+    try {
+      const { result } = await this.engine.write(buildDelete(tab.schema, tab.name, cols, pkCols, pkVals));
+      const r = Array.isArray(result) ? result[0] : result;
+      if (r?.error) tab.status.textContent = r.error;
+      else if (r?.affectedRows === 0) tab.status.textContent = 'Baris sudah tidak ada (dihapus pengguna lain?)';
+      await this.loadTable(tab);
+    } catch (e) { tab.status.textContent = errMsg(e); }
+  }
+
+  openRowDialog(tab, mode, row) {
+    const { cols, pkCols } = this.tableMeta(tab);
+    if (!cols.length) return;
+    const fields = cols.map(c => {
+      const orig = mode === 'edit' ? fmt(row[c.name]) : null;
+      const input = h('textarea', { class: 'fld', rows: 1, spellcheck: false, value: orig ?? '', 'aria-label': c.name,
+        placeholder: mode === 'insert' ? (c.def ? `default: ${c.def}` : c.notnull ? 'wajib diisi' : 'kosong = default/NULL') : '' });
+      const nul = h('input', { type: 'checkbox', checked: mode === 'edit' && orig === null, 'aria-label': `NULL untuk ${c.name}` });
+      nul.addEventListener('change', () => { input.disabled = nul.checked; });
+      input.disabled = nul.checked;
+      const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(160, input.scrollHeight + 2) + 'px'; };   // auto-tinggi (CSSOM, aman dari CSP)
+      input.addEventListener('input', grow); setTimeout(grow, 0);
+      return { c, orig, input, nul, node: h('label', { class: 'frow' },
+        h('span', { class: 'fname' }, h('b', null, c.name), c.pk ? ' 🔑' : '', h('span', { class: 'mu' }, ` ${c.type}${c.notnull ? ' · wajib' : ''}`)),
+        input, h('span', { class: 'nullbox' }, nul, ' NULL')) };
+    });
+    const err = h('div', { class: 'er', hidden: true });
+    const save = h('button', { onClick: submit }, mode === 'insert' ? 'Tambah' : 'Simpan');
+    const close = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    const dlg = h('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': mode === 'insert' ? 'Tambah baris' : 'Edit baris' },
+      h('h3', null, `${mode === 'insert' ? 'Tambah baris' : 'Edit baris'} · ${tab.schema}.${tab.name}`),
+      h('div', { class: 'fields' }, fields.map(f => f.node)), err,
+      h('div', { class: 'row' }, save, h('button', { class: 'sec', onClick: close }, 'Batal')));
+    const backdrop = h('div', { class: 'backdrop', onClick: e => { if (e.target === backdrop) close(); } }, dlg);
+    document.addEventListener('keydown', onKey);
+    document.body.append(backdrop);
+    fields[0].input.focus();
+
+    const showErr = m => { err.textContent = m; err.hidden = !m; };
+    async function submit() {
+      showErr('');
+      let sql;
+      try {
+        if (mode === 'insert') {
+          const values = {};
+          for (const f of fields) {
+            if (f.nul.checked) values[f.c.name] = { mode: 'null' };
+            else if (f.input.value !== '') values[f.c.name] = { mode: 'value', v: f.input.value };
+            else values[f.c.name] = { mode: 'default' };
+          }
+          sql = buildInsert(tab.schema, tab.name, cols, values);
+        } else {
+          const changes = {};
+          for (const f of fields) {
+            const nowV = f.nul.checked ? null : f.input.value;
+            if (nowV !== f.orig) changes[f.c.name] = nowV === null ? { mode: 'null' } : { mode: 'value', v: nowV };
+          }
+          if (!Object.keys(changes).length) { close(); return; }
+          sql = buildUpdate(tab.schema, tab.name, cols, pkCols, pkCols.map((c, i) => row['__pk' + i]), changes);
+        }
+      } catch (e) { showErr(errMsg(e)); return; }
+      save.disabled = true; save.textContent = 'Menyimpan…';
+      try {
+        const { result } = await tab.ws.engine.write(sql);
+        const r = Array.isArray(result) ? result[0] : result;
+        if (r?.error) { showErr(r.error); save.disabled = false; save.textContent = mode === 'insert' ? 'Tambah' : 'Simpan'; return; }
+        if (mode === 'edit' && r?.affectedRows === 0) { showErr('Baris sudah tidak ada (dihapus pengguna lain?).'); save.disabled = false; save.textContent = 'Simpan'; return; }
+        close(); tab.ws.loadTable(tab);
+      } catch (e) { showErr(errMsg(e)); save.disabled = false; save.textContent = mode === 'insert' ? 'Tambah' : 'Simpan'; }
     }
   }
 

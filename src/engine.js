@@ -14,11 +14,14 @@ export const SNAP = 'TGPG-SNAP';
 const TEXT_LIMIT = 2800;            // plaintext maks sebagai pesan teks (base64 + overhead < 4096)
 const MAX_OP = 8 * 1024 * 1024;     // batas ukuran satu op
 const BATCH = 100;
+const SEEN_KEEP = 5000;              // op lama (selisih id pesan) dilupakan dari tabel dedupe
+const SEND_TRIES = 3;
 
 // Fungsi deterministik: nilainya diturunkan dari (timestamp op, id pesan, counter) sehingga sama di semua klien.
 export const INIT_SQL = `
 create table if not exists _tgpg_meta(k text primary key, v bigint not null);
 insert into _tgpg_meta values ('last', 0) on conflict do nothing;
+create table if not exists _tgpg_seen(oid text primary key, msg bigint not null);   -- dedupe op (retry kirim)
 create or replace function tg_now() returns timestamptz language sql volatile as
 $$ select coalesce(nullif(current_setting('tgpg.ts', true), '')::timestamptz, now()) $$;
 create or replace function tg_uuid() returns uuid language plpgsql volatile as
@@ -51,6 +54,9 @@ export class Engine {
     this.waiters = new Map();     // id pesan -> resolve
     this.lastApplied = 0; this.lastOp = 0; this.lastSnapOp = 0; this.myWrites = 0;   // lastOp = id op terakhir (pesan snapshot tidak dihitung)
     this.decryptErrors = 0;
+    this.byOid = new Map();       // oid -> hasil penerapan pertama op milik sendiri
+    this.onSync = null;           // callback(ok, error) setelah tiap sinkron
+    this.warnedEdited = new Set();
     this.onApplied = null;        // callback(lastApplied)
   }
 
@@ -84,7 +90,9 @@ export class Engine {
   }
 
   sync() {
-    return this.serial(() => this._catchUp()).catch(e => this.log('Sync gagal: ' + (e.message || e), 'er'));
+    return this.serial(() => this._catchUp()).then(
+      () => { if (this.onSync) this.onSync(true); },
+      e => { this.log('Sync gagal: ' + (e.message || e), 'er'); if (this.onSync) this.onSync(false, e); });
   }
 
   async _catchUp() {
@@ -115,13 +123,23 @@ export class Engine {
       this.log(`#${m.id}: op tidak bisa dibuka (kunci salah / pesan rusak)`, 'er');
     }
 
+    if (m.edited && !this.warnedEdited.has(m.id)) {
+      this.warnedEdited.add(m.id);
+      this.log(`#${m.id} pernah diedit di Telegram; salinan lain bisa berbeda. Gunakan "Reset lokal" bila data tampak tidak sama.`, 'er');
+    }
+
     if (op && op.v === 1 && typeof op.sql === 'string') {
       const t = Number.isNaN(Date.parse(op.t)) ? '1970-01-01T00:00:00Z' : new Date(op.t).toISOString();
       let res;
       try {
         await this.db.transaction(async tx => {
+          if (op.oid) {   // op yang sama bisa terkirim dua kali (retry setelah respons hilang): terapkan sekali saja
+            const ins = await tx.query('insert into _tgpg_seen(oid, msg) values ($1, $2) on conflict do nothing returning oid', [op.oid, m.id]);
+            if (!ins.rows.length) { res = { duplicate: true }; await tx.query(`update _tgpg_meta set v=$1 where k='last'`, [m.id]); return; }
+          }
           await tx.query(`select set_config('tgpg.ts',$1,true), set_config('tgpg.seed',$2,true), set_config('tgpg.n','0',true)`, [t, String(m.id)]);
           res = await tx.exec(op.sql);
+          if (m.id % 100 === 0) await tx.query('delete from _tgpg_seen where msg < $1', [m.id - SEEN_KEEP]);
           await tx.query(`update _tgpg_meta set v=$1 where k='last'`, [m.id]);
         });
       } catch (e) {
@@ -131,8 +149,11 @@ export class Engine {
         this.log(`#${m.id} ditolak: ${e.message}`, 'er');
       }
       this.lastOp = m.id;
-      if (op.cid === this.cid) this.results.set(m.id, res);
-      else this.log(`#${m.id} ${op.a || '?'}: ${op.sql.slice(0, 80).replace(/\s+/g, ' ')}`, 'mu');
+      if (op.cid === this.cid) {
+        this.results.set(m.id, res);
+        if (op.oid && !res.duplicate) this.byOid.set(op.oid, res);
+      }
+      else if (!res.duplicate) this.log(`#${m.id} ${op.a || '?'}: ${op.sql.slice(0, 80).replace(/\s+/g, ' ')}`, 'mu');
     } else {
       await this._setLast(m.id);   // snapshot / pesan layanan / pesan lain
     }
@@ -162,17 +183,32 @@ export class Engine {
   }
 
   async write(sql, { timeoutMs = 30000 } = {}) {
-    const op = { v: 1, sql: rewrite(sql), a: this.author, t: new Date().toISOString(), cid: this.cid };
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new Error('Sedang offline: perubahan tidak dapat dikirim ke Telegram.');
+    const op = { v: 1, sql: rewrite(sql), a: this.author, t: new Date().toISOString(), cid: this.cid, oid: crypto.randomUUID() };
     const plain = new TextEncoder().encode(JSON.stringify(op));
     if (plain.length > MAX_OP) throw new Error('Statement terlalu besar (maks 8 MB).');
     const enc = await encrypt(this.key, plain);
-    const id = plain.length <= TEXT_LIMIT
-      ? await this.transport.sendText(OP_PREFIX + b64.enc(enc))
-      : await this.transport.sendFile(enc, OP_FILE);
+    const id = await this._send(() => plain.length <= TEXT_LIMIT
+      ? this.transport.sendText(OP_PREFIX + b64.enc(enc))
+      : this.transport.sendFile(enc, OP_FILE));
     await this._waitApplied(id, timeoutMs);
-    const result = this.results.get(id); this.results.delete(id);
+    const result = this.byOid.get(op.oid) ?? this.results.get(id);
+    this.results.delete(id); this.byOid.delete(op.oid);
     if (++this.myWrites % this.snapshotEvery === 0) this.snapshot().catch(e => this.log('Snapshot otomatis gagal: ' + e.message, 'er'));
     return { id, result };
+  }
+
+  /** Kirim dengan retry untuk error jaringan sementara (aman: op punya oid, duplikat diabaikan saat diterapkan). */
+  async _send(fn) {
+    for (let i = 1; ; i++) {
+      try { return await fn(); } catch (e) {
+        const msg = `${e?.errorMessage || ''} ${e?.message || ''}`;
+        const transient = !e?.errorMessage || /TIMEOUT|FLOOD|INTERNAL|RPC_CALL_FAIL|MSG_WAIT|Not connected|Connection/i.test(msg);
+        if (!transient || i >= SEND_TRIES) throw e;
+        this.log(`Kirim gagal (${msg.trim().slice(0, 60)}), mencoba lagi ${i}/${SEND_TRIES - 1}…`, 'er');
+        await new Promise(r => setTimeout(r, 800 * i));
+      }
+    }
   }
 
   _waitApplied(id, timeoutMs) {
