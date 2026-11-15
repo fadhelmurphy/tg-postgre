@@ -1,6 +1,7 @@
 """E2E UI (Chrome headless) terhadap harness workspace (engine + transport in-memori, tanpa Telegram).
 Jalankan:  npm run build:harness && python3 -m http.server 4173 -d /tmp/harness-site &  python3 tests/e2e/ui_flow.py
 Env: BASE_URL (default http://localhost:4173/ws.html), CHROME_PATH (opsional)."""
+import os
 import json, os, sys
 from playwright.sync_api import sync_playwright
 
@@ -125,6 +126,17 @@ with sync_playwright() as p:
     pg.fill('.invite input[type=text]', '@gagal_user'); pg.locator('.invite button', has_text='Undang').click(); pg.wait_for_timeout(300)
     ck('undang: error tampil', 'tidak ditemukan' in pg.inner_text('.invite'))
     pg.locator('button', has_text='Bagikan').click()
+
+    # ── backup & diagnostik
+    with pg.expect_download(timeout=30000) as dl:
+        pg.locator('button', has_text='Backup').click()
+    d = dl.value; path = d.path()
+    ck('backup: file .tar.gz > 100KB', d.suggested_filename.endswith('.tar.gz') and os.path.getsize(path) > 100000, d.suggested_filename)
+    pg.get_by_role('button', name='Diagnostik', exact=True).click(); pg.locator('.diag').wait_for(state='attached')
+    pg.locator('button', has_text='Jalankan diagnostik').click(); pg.wait_for_timeout(500)
+    dt = pg.inner_text('.diag')
+    ck('diagnostik: hasil lulus & gagal tampil', '✓ Contoh lulus' in dt and '✗ Contoh gagal — RPC_ERROR' in dt, dt)
+    pg.get_by_role('button', name='Diagnostik', exact=True).click()
 
     # ── anggota: daftar, cabut akses
     pg.locator('button', has_text='Anggota').click(); pg.wait_for_timeout(300)

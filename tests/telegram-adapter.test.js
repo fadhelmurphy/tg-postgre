@@ -10,7 +10,7 @@ import { Buffer } from 'node:buffer';
 import { PGlite } from '@electric-sql/pglite';
 import { CustomFile } from 'telegram/client/uploads';
 import { Engine } from '../src/engine.js';
-import { TelegramTransport } from '../src/telegram.js';
+import { TelegramTransport, runDiagnostics } from '../src/telegram.js';
 import { importKey, randomKeyBytes } from '../src/crypto.js';
 
 class FakeServer {
@@ -36,6 +36,7 @@ class FakeClient {
     this.s.files.set(m.id, Buffer.from(file.buffer));
     queueMicrotask(() => this.s.broadcast(m)); return m;
   }
+  async deleteMessages(entity, ids) { this.s.msgs = this.s.msgs.filter(m => !ids.includes(m.id)); }
   async downloadMedia(m) { return Buffer.from(this.s.files.get(m.id)); }
   addEventHandler(cb, event) { this.handlers.push({ cb, event }); }
   removeEventHandler(cb) { this.handlers = this.handlers.filter(h => h.cb !== cb); }
@@ -132,4 +133,20 @@ describe('inviteUser', () => {
     await expect(inviteUser(p.client, {}, 'budi_123')).rejects.toThrow(/privasi/);
     expect(p.calls.dm.length).toBe(0);
   });
+});
+
+describe('runDiagnostics', () => {
+  it('semua pemeriksaan lulus di klien tiruan dan pesan uji dibersihkan', async () => {
+    const s = new FakeServer(); const c = new FakeClient(s);
+    const res = await runDiagnostics(c, { id: 1 });
+    expect(res.filter(r => !r.ok)).toEqual([]);
+    expect(res.length).toBeGreaterThanOrEqual(8);
+    expect(s.msgs.length).toBe(0);
+  }, 15000);
+  it('melaporkan kegagalan tanpa melempar', async () => {
+    const s = new FakeServer(); const c = new FakeClient(s);
+    c.sendMessage = async () => { throw Object.assign(new Error('x'), { errorMessage: 'CHAT_WRITE_FORBIDDEN' }); };
+    const res = await runDiagnostics(c, { id: 1 });
+    expect(res.some(r => !r.ok && /CHAT_WRITE_FORBIDDEN/.test(r.detail))).toBe(true);
+  }, 15000);
 });

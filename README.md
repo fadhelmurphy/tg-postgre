@@ -67,3 +67,5 @@ npm run build    # output di dist/
 - **Owner** = pengirim pesan TGPG pertama di grup (pembuat database). Di panel **Anggota**, owner bisa **Cabut** (kunci baru dibungkus hanya untuk anggota yang tersisa, user dikeluarkan dari grup, op darinya ditolak semua klien) dan **Setujui** (anggota baru setelah rotasi mendapat kunci).
 - Setelah rotasi, siapa pun yang hanya punya connection string lama hanya bisa membaca data sampai titik rotasi.
 - **Batas**: yang dicabut tetap memegang data yang pernah ia lihat (tidak bisa ditarik kembali). Bila owner kehilangan vault (identitas), ia tidak bisa merotasi lagi. Anggota yang tidak pernah `hello` (klien lama) tidak ikut menerima kunci baru. Tidak ada transfer kepemilikan.
+
+- **Diagnostik** (toolbar): uji satu klik terhadap Telegram asli (login, kirim/baca maju, senderId, file, pencarian, event realtime). **Backup**: unduh salinan lokal database (`.tar.gz` PGlite).

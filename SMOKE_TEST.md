@@ -2,6 +2,7 @@
 
 Belum pernah diuji terhadap server Telegram asli. Jalankan ini sekali sebelum dipakai serius. Butuh 2 akun Telegram (A, B) dan 2 browser/profil, plus `api_id`/`api_hash` dari my.telegram.org.
 
+0. **A**: buat database → tombol **Diagnostik** → semua baris harus ✓. Baris ✗ menunjukkan asumsi yang salah di Telegram asli (kirim hasilnya ke saya). "Event realtime" ✗ tidak fatal (sinkron tetap lewat polling 15 dtk).
 1. **A**: login (nomor, kode, 2FA bila ada) → buat database → salin connection string `tgpg://…#…`.
 2. **A**: `create table t(id serial primary key, v text); insert into t(v) values ('a');`
 3. **B**: login → Gabung dengan connection string → `select * from t` harus berisi `a`.

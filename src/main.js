@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, inviteUser, kickUser, TelegramTransport } from './telegram.js';
+import { connectClient, createChannel, resolveInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -37,6 +37,8 @@ const ws = new Workspace($('c-work'), {
   onReset: () => resetLocal().catch(e => log('Gagal: ' + errMsg(e), 'er')),
   onClose: () => closeDatabase(),
   getConn: () => current?.conn || '',
+  onDiagnose: () => runDiagnostics(client, current.chat),
+  onBackup: async () => { const b = await engine.backup(); return b; },
   onApprove: sid => engine.approve(sid),
   onRevoke: async sid => {
     const r = await engine.rotate({ remove: [sid] });

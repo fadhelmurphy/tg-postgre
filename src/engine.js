@@ -436,6 +436,9 @@ export class Engine {
     });
   }
 
+  /** Salinan lokal database (tar.gz PGlite) untuk backup manual. */
+  backup() { return this.serial(() => this.db.dumpDataDir('gzip')); }
+
   async close() {
     if (this.unsub) this.unsub();
     await this.chain;

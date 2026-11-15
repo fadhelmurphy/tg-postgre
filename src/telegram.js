@@ -118,3 +118,48 @@ export async function kickUser(client, chat, userId) {
     channel: chat, participant: user, bannedRights: new Api.ChatBannedRights({ untilDate: 0, viewMessages: true }),
   }));
 }
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/** Uji asumsi yang dipakai TGPG terhadap Telegram sungguhan. Menulis pesan uji (awalan TGDIAG, diabaikan engine) lalu menghapusnya. */
+export async function runDiagnostics(client, entity) {
+  const out = [], ids = [], tag = 'TGDIAG ' + Date.now();
+  const add = (name, ok, detail = '') => out.push({ name, ok: !!ok, detail });
+  const step = async (name, fn) => { try { await fn(); } catch (e) { add(name, false, e?.errorMessage || e?.message || String(e)); } };
+  let me = null, sent = null, got = false;
+  const handler = () => { got = true; }, ev = new NewMessage({ chats: [entity] });
+  await step('Login (getMe)', async () => { me = await client.getMe(); add('Login (getMe)', me?.id, String(me?.id)); });
+  if (!me) return out;
+  client.addEventHandler(handler, ev);
+  await step('Kirim pesan teks', async () => { sent = await client.sendMessage(entity, { message: tag + ' a', linkPreview: false }); ids.push(sent.id); add('Kirim pesan teks', sent.id, '#' + sent.id); });
+  if (sent) {
+    await step('Event realtime', async () => {
+      for (let i = 0; i < 30 && !got; i++) await sleep(200);
+      add('Event realtime (NewMessage)', got, got ? '' : 'tidak ada event dalam 6 dtk; sinkron hanya lewat polling 15 dtk');
+    });
+    await step('Baca maju', async () => {
+      const arr = [...await client.getMessages(entity, { limit: 10, reverse: true, offsetId: sent.id - 1 })];
+      const ordered = arr.every((m, i) => i === 0 || m.id > arr[i - 1].id);
+      add('Baca maju (reverse + offsetId)', arr.length >= 1 && arr[0].id === sent.id && ordered, arr.length + ' pesan, urut naik: ' + ordered);
+      const m0 = arr.find(m => m.id === sent.id);
+      add('ID pengirim (senderId) = akun sendiri', m0 && String(m0.senderId) === String(me.id), String(m0?.senderId));
+      add('Pesan baru tidak bertanda "diedit"', m0 && !m0.editDate);
+    });
+  }
+  let file = null; const bytes = crypto.getRandomValues(new Uint8Array(2048));
+  await step('Kirim/unduh file', async () => {
+    const buf = Buffer.from(bytes);
+    file = await client.sendFile(entity, { file: new CustomFile('tgpg.bin', buf.length, '', buf), caption: 'TGDIAG-SNAP ' + tag, forceDocument: true, workers: 2 });
+    ids.push(file.id);
+    const back = new Uint8Array(await client.downloadMedia(file, {}));
+    add('Kirim & unduh file (dokumen)', back.length === bytes.length && back.every((b, i) => b === bytes[i]), back.length + ' byte');
+  });
+  if (file) await step('Pencarian', async () => {
+    await sleep(2000);
+    const found = [...await client.getMessages(entity, { limit: 5, search: 'TGDIAG-SNAP' })];
+    add('Pencarian caption (dipakai mencari snapshot)', found.some(m => m.id === file.id), found.length ? '' : 'indeks pencarian Telegram bisa tertunda; coba lagi beberapa detik');
+  });
+  client.removeEventHandler(handler, ev);
+  await step('Hapus pesan uji', async () => { if (ids.length) await client.deleteMessages(entity, ids, { revoke: true }); add('Bersihkan pesan uji', true); });
+  return out;
+}

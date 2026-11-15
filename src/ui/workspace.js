@@ -58,6 +58,10 @@ export class Workspace {
     this.memPanel = h('div', { class: 'ws-share', hidden: true },
       h('div', { class: 'mu' }, 'Anggota database. Owner bisa menyetujui anggota baru dan mencabut akses (kunci enkripsi diganti; yang dicabut tidak bisa membaca/menulis data baru, tapi tetap menyimpan apa yang pernah ia lihat).'),
       this.memList, this.memMsg);
+    this.diagOut = h('div', { class: 'diag' });
+    this.diagPanel = h('div', { class: 'ws-share', hidden: true },
+      h('div', { class: 'mu' }, 'Menguji asumsi TGPG terhadap Telegram sungguhan (mengirim beberapa pesan uji ke grup ini, lalu menghapusnya).'),
+      h('button', { class: 'small', onClick: () => this.diagnose() }, 'Jalankan diagnostik'), this.diagOut);
     this.blockedEl = null;
     this.sharePanel = h('div', { class: 'ws-share', hidden: true },
       h('div', { class: 'mu' }, 'Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):'), this.shareStr,
@@ -70,6 +74,8 @@ export class Workspace {
     const bar = h('div', { class: 'ws-bar' }, this.sideBtn, this.titleEl, this.statEl, this.netEl, h('span', { class: 'spacer' }),
       h('button', { class: 'sec small', onClick: () => this.cb.onSync() }, 'Sinkron'),
       h('button', { class: 'sec small', onClick: () => this.cb.onSnapshot() }, 'Snapshot'),
+      h('button', { class: 'sec small', onClick: () => this.backup() }, 'Backup'),
+      h('button', { class: 'sec small', onClick: () => { this.diagPanel.hidden = !this.diagPanel.hidden; } }, 'Diagnostik'),
       h('button', { class: 'sec small', onClick: () => { this.renderMembers(); this.memPanel.hidden = !this.memPanel.hidden; } }, 'Anggota'),
       h('button', { class: 'sec small', onClick: () => { this.shareStr.textContent = this.cb.getConn(); this.sharePanel.hidden = !this.sharePanel.hidden; } }, 'Bagikan'),
       h('button', { class: 'sec small', onClick: () => this.cb.onReset() }, 'Reset lokal'),
@@ -84,7 +90,7 @@ export class Workspace {
     const main = h('div', { class: 'ws-main' }, this.tabbar, this.panes);
     window.addEventListener('online', () => this.renderNet());
     window.addEventListener('offline', () => this.renderNet());
-    this.root.replaceChildren(bar, this.sharePanel, this.memPanel, h('div', { class: 'ws-body' }, this.side, main));
+    this.root.replaceChildren(bar, this.sharePanel, this.memPanel, this.diagPanel, h('div', { class: 'ws-body' }, this.side, main));
     // di HP: sentuh di luar drawer menutupnya
     this.root.addEventListener('click', e => {
       if (this.side.classList.contains('open') && !this.side.contains(e.target) && !this.sideBtn.contains(e.target)) this.side.classList.remove('open');
@@ -137,6 +143,22 @@ export class Workspace {
       this.invMsg.textContent = '@' + r.username + ' ditambahkan ke grup' + (r.dm ? ' dan connection string dikirim via DM.' : '. Kirimkan connection string secara terpisah.');
       this.invUser.value = '';
     } catch (e) { this.invMsg.className = 'er'; this.invMsg.textContent = e.message || String(e); }
+  }
+
+  async backup() {
+    try {
+      const blob = await this.cb.onBackup();
+      const name = `tgpg-${this.titleEl.textContent || 'db'}-${new Date().toISOString().slice(0, 10)}.tar.gz`.replace(/[^\w.-]+/g, '_');
+      download(name, blob, 'application/gzip');
+    } catch (e) { this.statEl.textContent = 'Backup gagal: ' + (e.message || e); }
+  }
+
+  async diagnose() {
+    this.diagOut.replaceChildren(h('div', { class: 'mu' }, 'Menjalankan… (±10 detik)'));
+    try {
+      const res = await this.cb.onDiagnose();
+      this.diagOut.replaceChildren(...res.map(r => h('div', { class: r.ok ? 'ok' : 'er' }, (r.ok ? '✓ ' : '✗ ') + r.name + (r.detail ? ' — ' + r.detail : ''))));
+    } catch (e) { this.diagOut.replaceChildren(h('div', { class: 'er' }, e.message || String(e))); }
   }
 
   setBlocked(b) { this.blocked = b; this.renderNet(); this.renderMembers(); }
