@@ -3,6 +3,10 @@ name = "tgpg"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "tgpg"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tgpg"
 path = "src/main.rs"
@@ -13,6 +17,7 @@ tgpg-bridge = { path = "../tgpg-bridge" }
 tgpg-telegram = { path = "../tgpg-telegram" }
 tokio = { version = "1", features = ["full"] }
 tokio-postgres = "0.7"
+grammers-client = { version = "0.12.0", features = ["parse_invite_link"] }
 anyhow = "1"
 base64 = "0.22"
 serde = { version = "1", features = ["derive"] }

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["tgpg-core", "tgpg-bridge", "tgpg-telegram", "tgpg-cli"]
+members = ["tgpg-core", "tgpg-bridge", "tgpg-telegram", "tgpg-cli", "tgpg-gui"]
 
 [workspace.package]
 version = "0.1.0"

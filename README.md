@@ -86,5 +86,5 @@ Perilaku & batas:
 - Baca (`SELECT`, dst.) dijalankan di Postgres lokal; tulis dikirim ke grup sebagai op terenkripsi. Transaksi ditahan sampai `COMMIT` dan dikirim sebagai satu op; `SAVEPOINT` belum didukung.
 - Server tanpa autentikasi — hanya mau bind ke loopback.
 - Klien native memutar ulang seluruh log (belum memakai snapshot); satu owner per database.
-- **Belum diuji terhadap Telegram sungguhan**: hanya transport memori yang diuji otomatis (`cargo test`, butuh `TGPG_TEST_PG`; lihat `native/scripts/pg-test.sh`). Transport Telegram (`tgpg-telegram`, grammers) baru terbukti terkompilasi. Aplikasi desktop GUI belum ada; yang tersedia CLI.
+- **Belum diuji terhadap Telegram sungguhan**: hanya transport memori yang diuji otomatis (`cargo test`, butuh `TGPG_TEST_PG`; lihat `native/scripts/pg-test.sh`). Transport Telegram (`tgpg-telegram`, grammers) baru terbukti terkompilasi. Aplikasi desktop mini (egui): `cargo run -p tgpg-gui` — login, buka database, status server, setujui/cabut anggota; juga baru terkompilasi, belum diuji.
 - Postgres tertanam (`postgresql_embedded`) belum dipasang; saat ini butuh Postgres lokal.
