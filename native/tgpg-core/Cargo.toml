@@ -1,0 +1,26 @@
+[package]
+name = "tgpg-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aes-gcm = "0.10"
+p256 = { version = "0.13", features = ["ecdh"] }
+rand = "0.8"
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4"] }
+bytes = "1"
+async-trait = "0.1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
+hex = "0.4"

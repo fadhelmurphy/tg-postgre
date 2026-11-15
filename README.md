@@ -69,3 +69,22 @@ npm run build    # output di dist/
 - **Batas**: yang dicabut tetap memegang data yang pernah ia lihat (tidak bisa ditarik kembali). Bila owner kehilangan vault (identitas), ia tidak bisa merotasi lagi. Anggota yang tidak pernah `hello` (klien lama) tidak ikut menerima kunci baru. Tidak ada transfer kepemilikan.
 
 - **Diagnostik** (toolbar): uji satu klik terhadap Telegram asli (login, kirim/baca maju, senderId, file, pencarian, event realtime). **Backup**: unduh salinan lokal database (`.tar.gz` PGlite).
+
+## Klien native (Rust) — untuk DBeaver / psql
+
+Folder `native/` berisi klien TGPG tanpa browser. Ia memakai log Telegram yang sama dengan klien web (format op, kunci, dan rotasi kompatibel; diuji dua arah dengan vektor bersama), lalu membuka server protokol Postgres di `127.0.0.1` supaya DBeaver/psql/JDBC bisa tersambung. Tidak ada backend lain.
+
+```
+export TG_API_ID=... TG_API_HASH=...            # dari my.telegram.org
+export TGPG_PG_URL=postgres://u:p@127.0.0.1:5432/postgres   # Postgres lokal (admin)
+cargo run -p tgpg -- login
+cargo run -p tgpg -- serve 'tgpg://<hash>#<kunci>' --listen 127.0.0.1:5432
+```
+Lalu di DBeaver: host `127.0.0.1`, port sesuai `--listen`, database/user bebas, tanpa sandi.
+
+Perilaku & batas:
+- Baca (`SELECT`, dst.) dijalankan di Postgres lokal; tulis dikirim ke grup sebagai op terenkripsi. Transaksi ditahan sampai `COMMIT` dan dikirim sebagai satu op; `SAVEPOINT` belum didukung.
+- Server tanpa autentikasi — hanya mau bind ke loopback.
+- Klien native memutar ulang seluruh log (belum memakai snapshot); satu owner per database.
+- **Belum diuji terhadap Telegram sungguhan**: hanya transport memori yang diuji otomatis (`cargo test`, butuh `TGPG_TEST_PG`; lihat `native/scripts/pg-test.sh`). Transport Telegram (`tgpg-telegram`, grammers) baru terbukti terkompilasi. Aplikasi desktop GUI belum ada; yang tersedia CLI.
+- Postgres tertanam (`postgresql_embedded`) belum dipasang; saat ini butuh Postgres lokal.

@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["tgpg-core", "tgpg-bridge", "tgpg-telegram", "tgpg-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

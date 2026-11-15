@@ -1,0 +1,23 @@
+name: native
+on:
+  push: { paths: ['native/**', '.github/workflows/native.yml'] }
+  pull_request: { paths: ['native/**'] }
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: pw }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TGPG_TEST_PG: postgres://postgres:pw@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: native }
+      - run: cargo test --workspace
+        working-directory: native

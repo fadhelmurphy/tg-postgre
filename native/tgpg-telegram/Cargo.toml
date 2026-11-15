@@ -1,0 +1,13 @@
+[package]
+name = "tgpg-telegram"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tgpg-core = { path = "../tgpg-core" }
+grammers-client = { version = "0.12.0", features = ["parse_invite_link"] }
+grammers-mtsender = "0.12"
+grammers-session = { version = "0.12", features = ["sqlite-storage"] }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+anyhow = "1"

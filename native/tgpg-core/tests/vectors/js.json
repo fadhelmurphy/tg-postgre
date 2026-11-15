@@ -1,0 +1,100 @@
+{
+ "aesKey": "bZ7tc99Dyf6G/jaz/qNtduMIYZhcJ+LtgFJyrsmyVCw=",
+ "plain": "halo dunia ✓ {\"a\":1}",
+ "cipher": "jrqmcXjrdZX1QRUO4L+QGMSyXh+B3nXC5eRsziNOGMnnFoJ9N5u+GDoEXfKj6Q/tVz8=",
+ "identity": {
+  "jwk": {
+   "key_ops": [
+    "deriveKey"
+   ],
+   "ext": true,
+   "kty": "EC",
+   "x": "XvTUUAbFGTKHeV_SsH3PliBWlF_co-VpBs9znT5eJpo",
+   "y": "cwDCpLzlRt8ki_XkS7lldD6V7cDNmJrjMdJM2fxxz9Q",
+   "crv": "P-256",
+   "d": "tLSPn59Q9GHAMbxECel6R4CBtIIiTyCQTfRU2uz3BG4"
+  },
+  "pub": "BF701FAGxRkyh3lf0rB9z5YgVpRf3KPlaQbPc50+XiaacwDCpLzlRt8ki/XkS7lldD6V7cDNmJrjMdJM2fxxz9Q="
+ },
+ "wrapPlain": "{\"1\":\"RuytGaY4PgV2Vo3XsUTZKNnI9OYdrQysGrTCKHFpATU=\",\"2\":\"kO37UP4k+ByQtAu8UQRmxQyIh3w3zzZAjd4aRyMjnMU=\"}",
+ "wrap": {
+  "e": "BAp2+n4IRwfxzWDYtT9LE20x8FAVvM1Me8S+grBHToSyWX3QCCcj0N6Zc2I2y/IWyb0lYFA8OcWY/cvO4mRd7iw=",
+  "c": "X0i7hExVtK/8mXxPS+uo0M3OzmNO7mXavGT1igTjB8jsjd1jpunPqKu5jVENWbJ93WnPgjolfm3/8rjYocmEHQMz/ZE9WChvbg8chsWfXvj6LJ7aoCbJAbg5uQ8kDVECWpXUdWwuVhMefqjBu2lPoqsePAPop5dCN3Qt0q4V9E5YpWA="
+ },
+ "rewrite": [
+  {
+   "in": "insert into t values (now(), gen_random_uuid(), 'now()', \"now()\") -- now()\n, random(), current_timestamp",
+   "out": "insert into t values (tg_now(), tg_uuid(), 'now()', \"now()\") -- now()\n, tg_random(), tg_now()"
+  },
+  {
+   "in": "select $f$ now() $f$, now ( )",
+   "out": "select $f$ now() $f$, tg_now()"
+  },
+  {
+   "in": "select current_timestamp(3), my_now()",
+   "out": "select current_timestamp(3), my_now()"
+  },
+  {
+   "in": "select 'unterminated now()",
+   "out": "select 'unterminated tg_now()"
+  },
+  {
+   "in": "select /* now() */ 1 -- random()",
+   "out": "select /* now() */ 1 -- random()"
+  },
+  {
+   "in": "select 'é' || now()",
+   "out": "select 'é' || tg_now()"
+  },
+  {
+   "in": "update t set a = clock_timestamp() where b = statement_timestamp()",
+   "out": "update t set a = tg_now() where b = tg_now()"
+  }
+ ],
+ "isRead": [
+  {
+   "sql": "select 1",
+   "read": true
+  },
+  {
+   "sql": " SELECT 'a;b' ",
+   "read": true
+  },
+  {
+   "sql": "select 1; drop table x",
+   "read": false
+  },
+  {
+   "sql": "insert into t values (1)",
+   "read": false
+  },
+  {
+   "sql": "with a as (select 1) select * from a",
+   "read": true
+  },
+  {
+   "sql": "with a as (insert into t values(1) returning *) select * from a",
+   "read": false
+  },
+  {
+   "sql": "select * into t2 from t",
+   "read": false
+  },
+  {
+   "sql": "show all",
+   "read": true
+  },
+  {
+   "sql": "explain select 1",
+   "read": true
+  },
+  {
+   "sql": "values (1)",
+   "read": true
+  },
+  {
+   "sql": "create table x(a int)",
+   "read": false
+  }
+ ]
+}

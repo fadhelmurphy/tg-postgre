@@ -4,6 +4,13 @@ export class Channel {
   push(m) { const msg = { id: this.nextId++, text: '', file: null, ...m }; this.msgs.push(msg); return msg; }
   service() { this.push({ service: true }); }              // mis. "user joined": punya id tapi bukan op
   notify() { for (const s of this.subs) s(); }
+  /** Dump/restore untuk uji interop dengan klien Rust (bentuk sama dengan DumpMsg di Rust). */
+  dump() { return this.msgs.map(m => ({ id: m.id, text: m.text || '', file: m.file ? Buffer.from(m.file).toString('base64') : null, sender: m.sender || '' })); }
+  static load(dump) {
+    const ch = new Channel();
+    for (const d of dump) { ch.msgs.push({ id: d.id, text: d.text, file: d.file ? new Uint8Array(Buffer.from(d.file, 'base64')) : null, sender: d.sender }); ch.nextId = Math.max(ch.nextId, d.id + 1); }
+    return ch;
+  }
   handle(sender = '') { return new MemoryTransport(this, sender); }
 }
 class MemoryTransport {

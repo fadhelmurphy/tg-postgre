@@ -60,6 +60,7 @@ describe('rotasi kunci & pencabutan akses', () => {
     const D = await join('D'); await D.sync();
     expect(D.blocked).toBeTruthy();
     await expect(D.write(`insert into t values ('d')`)).rejects.toThrow(/akses tulis/);
+    await A.sync();                                                              // A melihat hello D di log
     expect(A.memberList().find(m => m.sid === 'D').status).toBe('pending');
     await A.approve('D'); await D.sync();
     expect(D.blocked).toBeNull(); expect(D.myEpoch).toBe(1);

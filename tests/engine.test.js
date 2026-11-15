@@ -25,6 +25,7 @@ describe('sql helpers', () => {
     expect(isRead(" SELECT 'a;b' ")).toBe(true);
     expect(isRead('select 1; drop table x')).toBe(false);
     expect(isRead('insert into t values (1)')).toBe(false);
+    expect(isRead('select * into t2 from t')).toBe(false);
     expect(isRead('with a as (select 1) select * from a')).toBe(true);
     expect(isRead('with a as (insert into t values(1) returning *) select * from a')).toBe(false);
   });

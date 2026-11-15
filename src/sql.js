@@ -22,6 +22,7 @@ export function rewrite(sql) {
 export function isRead(sql) {
   const s = sql.replace(QUOTED, "''").trim();
   if (/;\s*\S/.test(s)) return false;
-  if (/^(select|show|values|explain)\b/i.test(s)) return true;
+  if (/^select\b/i.test(s)) return !/\binto\b/i.test(s);   // SELECT ... INTO membuat tabel
+  if (/^(show|values|explain)\b/i.test(s)) return true;
   return /^with\b/i.test(s) && !/\b(insert|update|delete|merge|into)\b/i.test(s);
 }
