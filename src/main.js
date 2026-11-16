@@ -25,38 +25,62 @@ const errMsg = e => e?.errorMessage || e?.message || String(e);
 let V = null;            // isi vault: {apiId, apiHash, name, session, dbs}
 let VK = null;           // kunci vault (CryptoKey)
 let client = null;
-let engine = null, current = null, syncTimer = null;
+const sessions = new Map();   // dbId -> {dbId, chat, rawKey, conn, engine, ws, root, syncTimer}
+let activeId = null;
 const heldLocks = new Set();
 
-const ws = new Workspace($('c-work'), {
-  onSync: () => engine?.sync(),
-  onSnapshot: async () => {
-    try { const r = await engine?.snapshot(); if (!r) log('Tidak ada perubahan sejak snapshot terakhir.'); }
-    catch (e) { log('Snapshot gagal: ' + errMsg(e), 'er'); }
-  },
-  onReset: () => resetLocal().catch(e => log('Gagal: ' + errMsg(e), 'er')),
-  onClose: () => closeDatabase(),
-  getConn: () => current?.conn || '',
-  onDiagnose: () => runDiagnostics(client, current.chat),
-  onBackup: async () => { const b = await engine.backup(); return b; },
-  onApprove: sid => engine.approve(sid),
-  onRevoke: async sid => {
-    const r = await engine.rotate({ remove: [sid] });
-    try { await kickUser(client, current.chat, sid); } catch (e) { log('Tidak bisa mengeluarkan dari grup Telegram (' + errMsg(e) + '); kunci tetap sudah dirotasi.', 'er'); }
-    return r;
-  },
-  onInvite: async (username, sendKey) => {
-    if (!current) throw new Error('Tidak ada database terbuka.');
-    return inviteUser(client, current.chat, username, { connStr: current.conn, sendKey });
-  },
-});
+function makeWs(sess, root) {
+  const eng = () => sess.engine;
+  return new Workspace(root, {
+    onSync: () => eng()?.sync(),
+    onSnapshot: async () => {
+      try { const r = await eng()?.snapshot(); if (!r) log('Tidak ada perubahan sejak snapshot terakhir.'); }
+      catch (e) { log('Snapshot gagal: ' + errMsg(e), 'er'); }
+    },
+    onReset: () => resetLocal(sess).catch(e => log('Gagal: ' + errMsg(e), 'er')),
+    onClose: () => closeSession(sess.dbId),
+    getConn: () => sess.conn || '',
+    onDiagnose: () => runDiagnostics(client, sess.chat),
+    onBackup: async () => eng().backup(),
+    onApprove: sid => eng().approve(sid),
+    onRevoke: async sid => {
+      const r = await eng().rotate({ remove: [sid] });
+      try { await kickUser(client, sess.chat, sid); } catch (e) { log('Tidak bisa mengeluarkan dari grup Telegram (' + errMsg(e) + '); kunci tetap sudah dirotasi.', 'er'); }
+      return r;
+    },
+    onInvite: async (username, sendKey) => inviteUser(client, sess.chat, username, { connStr: sess.conn, sendKey }),
+  });
+}
 
 function showHome(on) {
   show('c-db', on); show('c-work', !on);
   document.querySelector('main').classList.toggle('wide', !on);
 }
-async function closeDatabase() {
-  ws.close(); await closeEngine(); current = null; showHome(true);
+/** Tampilkan database terbuka `id`, atau beranda bila null. */
+function view(id) {
+  activeId = id && sessions.has(id) ? id : null;
+  for (const [sid, x] of sessions) x.root.hidden = sid !== activeId;
+  showHome(!activeId); renderBar();
+}
+function renderBar() {
+  const bar = $('dbbar'); bar.replaceChildren(); bar.hidden = sessions.size === 0;
+  for (const [id, x] of sessions) {
+    const t = document.createElement('button'); t.className = 'dbtab' + (id === activeId ? ' on' : '');
+    t.textContent = '🗄 ' + (V.dbs?.[id]?.title || id); t.onclick = () => view(id);
+    const c = document.createElement('span'); c.className = 'x'; c.textContent = '×'; c.title = 'Tutup database ini';
+    c.onclick = e => { e.stopPropagation(); closeSession(id); }; t.appendChild(c); bar.appendChild(t);
+  }
+  const add = document.createElement('button'); add.className = 'dbtab add' + (!activeId ? ' on' : ''); add.textContent = '＋ Database';
+  add.onclick = () => view(null); bar.appendChild(add);
+  if (V) renderSaved();
+}
+async function closeSession(id) {
+  const x = sessions.get(id); if (!x) return;
+  clearInterval(x.syncTimer);
+  try { x.ws.close(); } catch {}
+  if (x.engine) { try { await x.engine.close(); } catch {} x.engine = null; }
+  x.root.remove(); sessions.delete(id);
+  if (activeId === id) view([...sessions.keys()].pop() || null); else renderBar();
 }
 
 const persist = () => saveVault(VK, V);
@@ -109,11 +133,11 @@ function renderSaved() {
   const box = $('saved'); box.replaceChildren();
   for (const [id, d] of Object.entries(V.dbs || {})) {
     const row = document.createElement('div'); row.className = 'saved-item';
-    const label = document.createElement('span'); label.textContent = d.title || id;
-    const open = document.createElement('button'); open.className = 'sec small'; open.textContent = 'Buka';
+    const label = document.createElement('span'); label.textContent = (sessions.has(id) ? '● ' : '') + (d.title || id);
+    const open = document.createElement('button'); open.className = 'sec small'; open.textContent = sessions.has(id) ? 'Lihat' : 'Buka';
     open.onclick = () => connectString(d.conn).catch(e => log('Gagal: ' + errMsg(e), 'er'));
     const del = document.createElement('button'); del.className = 'sec small'; del.textContent = 'Lupakan';
-    del.onclick = async () => { delete V.dbs[id]; await persist(); renderSaved(); };
+    del.onclick = async () => { await closeSession(id); delete V.dbs[id]; await persist(); renderSaved(); };
     row.append(label, open, del); box.appendChild(row);
   }
 }
@@ -145,8 +169,8 @@ async function connectString(str) {
 
 async function openDatabase(chat, rawKey, conn) {
   const dbId = String(chat.id);
+  if (sessions.has(dbId)) return view(dbId);
   if (!(await acquireLock('tgpg-db-' + dbId))) return log('Database ini sedang terbuka di tab lain.', 'er');
-  await closeEngine();
   const key = await importKey(rawKey);
   const initKey = 'init:' + dbId;
   const createDb = async blob => {
@@ -164,35 +188,39 @@ async function openDatabase(chat, rawKey, conn) {
   const identity = await loadIdentity(V.identity);
   V.dbs = V.dbs || {};
   const rec = V.dbs[dbId] = { ...(V.dbs[dbId] || {}), conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
-  log('Membuka database…');
-  engine = await Engine.open({
-    transport: new TelegramTransport(client, chat), key, createDb, hasLocal: !!LS.get(initKey),
-    author: V.name, log, identity, keys: rec.keys, onKeys: k => { rec.keys = k; persist().catch(() => {}); },
-  });
-  LS.set(initKey, '1');
-  current = { chat, rawKey, conn, dbId };
-  engine.onApplied = n => ws.notifyApplied(n);
-  engine.onSync = (ok, err) => ws.setSyncState(ok, err);
-  engine.onBlocked = b => ws.setBlocked(b);
-  ws.setBlocked(engine.blocked);
-  syncTimer = setInterval(() => engine.sync(), 15000);   // jaga-jaga bila ada update yang terlewat
-
-  await persist(); renderSaved();
-  await ws.open({ engine, dbId, title: V.dbs[dbId].title });
-  engine.onApplied(engine.lastApplied);
-  showHome(false);
-  log('Database siap. Posisi log #' + engine.lastApplied, 'ok');
+  log('Membuka database ' + rec.title + '…');
+  const root = document.createElement('div'); $('c-work').appendChild(root);
+  const sess = { dbId, chat, rawKey, conn, engine: null, root, syncTimer: null };
+  sess.ws = makeWs(sess, root);
+  try {
+    sess.engine = await Engine.open({
+      transport: new TelegramTransport(client, chat), key, createDb, hasLocal: !!LS.get(initKey),
+      author: V.name, log, identity, keys: rec.keys, onKeys: k => { rec.keys = k; persist().catch(() => {}); },
+    });
+    LS.set(initKey, '1');
+    const { engine, ws } = sess;
+    engine.onApplied = n => ws.notifyApplied(n);
+    engine.onSync = (ok, err) => ws.setSyncState(ok, err);
+    engine.onBlocked = b => ws.setBlocked(b);
+    ws.setBlocked(engine.blocked);
+    sess.syncTimer = setInterval(() => engine.sync(), 15000);   // jaga-jaga bila ada update yang terlewat
+    sessions.set(dbId, sess);
+    await persist();
+    await ws.open({ engine, dbId, title: rec.title });
+    engine.onApplied(engine.lastApplied);
+    view(dbId);
+    log('Database ' + rec.title + ' siap. Posisi log #' + engine.lastApplied, 'ok');
+  } catch (e) {
+    clearInterval(sess.syncTimer); sessions.delete(dbId); root.remove();
+    if (sess.engine) { try { await sess.engine.close(); } catch {} }
+    throw e;
+  }
 }
 
-async function closeEngine() {
-  clearInterval(syncTimer);
-  if (engine) { try { await engine.close(); } catch {} engine = null; }
-}
-
-async function resetLocal() {
-  if (!current || !confirm('Hapus salinan lokal dan bangun ulang dari Telegram?')) return;
-  const { chat, rawKey, conn, dbId } = current;
-  await closeEngine();
+async function resetLocal(sess) {
+  if (!confirm('Hapus salinan lokal dan bangun ulang dari Telegram?')) return;
+  const { chat, rawKey, conn, dbId } = sess;
+  await closeSession(dbId);
   await deleteIdb('tgpg-' + dbId);
   LS.del('init:' + dbId);
   await openDatabase(chat, rawKey, conn);
@@ -211,7 +239,7 @@ async function wipeAll() {
 }
 
 /* ───────── ketahanan: koneksi & error global ───────── */
-const resync = () => { if (engine && navigator.onLine !== false) engine.sync(); };
+const resync = () => { if (navigator.onLine !== false) for (const x of sessions.values()) x.engine?.sync(); };
 window.addEventListener('online', () => { log('Kembali online, sinkron…', 'ok'); resync(); });
 window.addEventListener('offline', () => log('Offline. Data lokal tetap bisa dibaca; write ditunda sampai online.', 'er'));
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resync(); });
