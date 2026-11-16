@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault, newVaultKey, rememberDevice, forgetDevice, unlockWithDevice } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
+import { connectClient, createChannel, resolveInvite, findChat, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -135,7 +135,7 @@ function renderSaved() {
     const row = document.createElement('div'); row.className = 'saved-item';
     const label = document.createElement('span'); label.textContent = (sessions.has(id) ? '● ' : '') + (d.title || id);
     const open = document.createElement('button'); open.className = 'sec small'; open.textContent = sessions.has(id) ? 'Lihat' : 'Buka';
-    open.onclick = () => connectString(d.conn).catch(e => log('Gagal: ' + errMsg(e), 'er'));
+    open.onclick = () => connectString(d.conn, id).catch(e => log('Gagal: ' + errMsg(e), 'er'));
     const del = document.createElement('button'); del.className = 'sec small'; del.textContent = 'Lupakan';
     del.onclick = async () => { await closeSession(id); delete V.dbs[id]; await persist(); renderSaved(); };
     row.append(label, open, del); box.appendChild(row);
@@ -160,10 +160,19 @@ async function createDatabase() {
   await openDatabase(chat, key, `tgpg://${hash}#${b64u.enc(key)}`);
 }
 
-async function connectString(str) {
+async function connectString(str, savedId = null) {
   const m = CONN_RE.exec(str.trim());
   if (!m) throw new Error('Format harus tgpg://INVITE#KUNCI');
-  const chat = await resolveInvite(client, m[1]);
+  let chat = null;
+  if (savedId) chat = await findChat(client, savedId).catch(() => null);   // sudah anggota: tak perlu link undangan
+  if (!chat) {
+    try { chat = await resolveInvite(client, m[1]); }
+    catch (e) {
+      if (/INVITE_HASH_(EXPIRED|INVALID)/.test(errMsg(e)))
+        throw new Error('Link undangan sudah kedaluwarsa/dicabut dan grup ini tidak ada di akun ini. Minta connection string baru dari pemilik database.');
+      throw e;
+    }
+  }
   await openDatabase(chat, b64u.dec(m[2]), `tgpg://${m[1]}#${m[2]}`);
 }
 

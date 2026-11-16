@@ -150,3 +150,12 @@ describe('runDiagnostics', () => {
     expect(res.some(r => !r.ok && /CHAT_WRITE_FORBIDDEN/.test(r.detail))).toBe(true);
   }, 15000);
 });
+
+import { findChat } from '../src/telegram.js';
+describe('findChat', () => {
+  const mk = list => ({ iterDialogs: async function* () { for (const e of list) yield { entity: e }; } });
+  it('menemukan grup berdasarkan id tanpa link undangan', async () => {
+    expect((await findChat(mk([{ id: 5n }, { id: 77n, title: 'x' }]), '77')).title).toBe('x');
+    expect(await findChat(mk([{ id: 5n }]), '9')).toBe(null);
+  });
+});

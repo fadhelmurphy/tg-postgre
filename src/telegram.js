@@ -41,6 +41,14 @@ export async function resolveInvite(client, hash) {
   return imp.chats[0];
 }
 
+/** Cari grup yang sudah diikuti berdasarkan id (tanpa link undangan; link bisa kedaluwarsa/dicabut). */
+export async function findChat(client, id) {
+  for await (const d of client.iterDialogs({ limit: 300 })) {
+    if (d.entity && String(d.entity.id) === String(id)) return d.entity;
+  }
+  return null;
+}
+
 /** Tambahkan @username ke grup; opsional kirim connection string lewat DM. */
 export async function inviteUser(client, chat, username, { connStr = '', sendKey = false } = {}) {
   const name = String(username || '').trim().replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '');
