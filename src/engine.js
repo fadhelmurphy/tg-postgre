@@ -390,8 +390,10 @@ export class Engine {
   _waitApplied(id, timeoutMs) {
     if (this.lastApplied >= id) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.waiters.delete(id); reject(new Error(`Terkirim sebagai #${id} tapi belum terkonfirmasi; akan diterapkan saat sinkron.`)); }, timeoutMs);
-      this.waiters.set(id, { resolve: () => { clearTimeout(timer); resolve(); } });
+      // Jangan hanya menunggu update realtime (bisa tertunda di HP/tab latar): tarik log secara aktif selama menunggu.
+      const poll = setInterval(() => { this.sync(); }, 2000);
+      const timer = setTimeout(() => { clearInterval(poll); this.waiters.delete(id); reject(new Error(`Terkirim sebagai #${id} tapi belum terkonfirmasi; akan diterapkan saat sinkron.`)); }, timeoutMs);
+      this.waiters.set(id, { resolve: () => { clearTimeout(timer); clearInterval(poll); resolve(); } });
       this.sync();
     });
   }
