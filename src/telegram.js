@@ -14,7 +14,7 @@ export async function connectClient({ apiId, apiHash, session, ask, log }) {
   await client.start({
     phoneNumber: () => ask('Nomor HP (format +62…)'),
     phoneCode: () => ask('Kode login dari Telegram'),
-    password: () => ask('Password 2FA Telegram'),
+    password: () => ask('Password 2FA Telegram', true),
     onError: e => { log('Login: ' + (e.errorMessage || e.message || e), 'er'); return ++errors >= 3; },
   });
   await client.getDialogs({ limit: 50 }).catch(() => {});   // isi cache entity & mulai terima update

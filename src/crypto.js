@@ -58,15 +58,42 @@ async function derive(pass, salt) {
     { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 export const hasVault = () => !!localStorage.getItem(VAULT_KEY);
-export const deleteVault = () => localStorage.removeItem(VAULT_KEY);
-export async function saveVault(pass, obj) {
+export const deleteVault = () => { localStorage.removeItem(VAULT_KEY); return forgetDevice().catch(() => {}); };
+
+/** vk = { key: CryptoKey (tidak bisa diekspor), salt } — dipertahankan agar vault bisa ditulis ulang tanpa passphrase. */
+export async function newVaultKey(pass) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const enc = await encrypt(await derive(pass, salt), new TextEncoder().encode(JSON.stringify(obj)));
-  localStorage.setItem(VAULT_KEY, JSON.stringify({ s: b64.enc(salt), d: b64.enc(enc) }));
+  return { key: await derive(pass, salt), salt };
+}
+export async function saveVault(vk, obj) {
+  const enc = await encrypt(vk.key, new TextEncoder().encode(JSON.stringify(obj)));
+  localStorage.setItem(VAULT_KEY, JSON.stringify({ s: b64.enc(vk.salt), d: b64.enc(enc) }));
+}
+async function open(vk, d) {
+  return JSON.parse(new TextDecoder().decode(await decrypt(vk.key, b64.dec(d))));
 }
 export async function loadVault(pass) {
   const { s, d } = JSON.parse(localStorage.getItem(VAULT_KEY));
+  const salt = b64.dec(s), vk = { key: await derive(pass, salt), salt };
+  try { return { data: await open(vk, d), vk }; } catch { throw new Error('Passphrase salah'); }
+}
+
+/* ── "ingat di perangkat ini": kunci vault (non-extractable) disimpan di IndexedDB agar refresh tidak minta passphrase ── */
+const idb = () => new Promise((res, rej) => {
+  const r = indexedDB.open('tgpg-device', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('k');
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+const tx = async (mode, fn) => { const db = await idb(); return new Promise((res, rej) => {
+  const t = db.transaction('k', mode), q = fn(t.objectStore('k'));
+  t.oncomplete = () => { db.close(); res(q.result); }; t.onerror = () => { db.close(); rej(t.error); }; }); };
+export const rememberDevice = vk => tx('readwrite', st => st.put({ key: vk.key, salt: vk.salt }, 'vault'));
+export const forgetDevice = () => tx('readwrite', st => st.delete('vault'));
+/** Coba buka vault dengan kunci perangkat; null bila tidak ada / gagal. */
+export async function unlockWithDevice() {
   try {
-    return JSON.parse(new TextDecoder().decode(await decrypt(await derive(pass, b64.dec(s)), b64.dec(d))));
-  } catch { throw new Error('Passphrase salah'); }
+    const vk = await tx('readonly', st => st.get('vault'));
+    if (!vk || !hasVault()) return null;
+    return { data: await open(vk, JSON.parse(localStorage.getItem(VAULT_KEY)).d), vk };
+  } catch { return null; }
 }

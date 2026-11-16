@@ -1,7 +1,7 @@
 import './style.css';
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
-import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault } from './crypto.js';
+import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault, newVaultKey, rememberDevice, forgetDevice, unlockWithDevice } from './crypto.js';
 import { Engine } from './engine.js';
 import { connectClient, createChannel, resolveInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
@@ -23,7 +23,7 @@ const errMsg = e => e?.errorMessage || e?.message || String(e);
 
 /* ───────── state ───────── */
 let V = null;            // isi vault: {apiId, apiHash, name, session, dbs}
-let PASS = null;
+let VK = null;           // kunci vault (CryptoKey)
 let client = null;
 let engine = null, current = null, syncTimer = null;
 const heldLocks = new Set();
@@ -59,12 +59,14 @@ async function closeDatabase() {
   ws.close(); await closeEngine(); current = null; showHome(true);
 }
 
-const persist = () => saveVault(PASS, V);
+const persist = () => saveVault(VK, V);
 
-function ask(label) {
+function ask(label, secret = false) {
   return new Promise(res => {
-    show('askRow'); $('askInput').value = ''; $('askInput').placeholder = label; $('askInput').focus();
-    const done = () => { $('askBtn').onclick = null; $('askInput').onkeydown = null; show('askRow', false); res($('askInput').value.trim()); };
+    const inp = $('askInput');
+    show('askRow'); inp.type = secret ? 'password' : 'text'; inp.autocomplete = secret ? 'current-password' : 'one-time-code';
+    inp.value = ''; inp.placeholder = label; inp.focus();
+    const done = () => { const v = inp.value; $('askBtn').onclick = null; inp.onkeydown = null; inp.value = ''; inp.type = 'text'; show('askRow', false); res(secret ? v : v.trim()); };
     $('askBtn').onclick = done;
     $('askInput').onkeydown = e => { if (e.key === 'Enter') done(); };
   });
@@ -72,8 +74,9 @@ function ask(label) {
 
 /* ───────── unlock / login ───────── */
 async function unlock() {
-  try { V = await loadVault($('unlockPass').value); PASS = $('unlockPass').value; }
+  try { const r = await loadVault($('unlockPass').value); V = r.data; VK = r.vk; }
   catch (e) { return log(errMsg(e), 'er'); }
+  if ($('rememberUnlock').checked) await rememberDevice(VK).catch(() => {}); else await forgetDevice().catch(() => {});
   show('c-unlock', false);
   await startClient();
 }
@@ -83,9 +86,9 @@ async function login() {
   if (!apiId || !apiHash) return log('Isi api_id dan api_hash.', 'er');
   if (pass.length < 8) return log('Passphrase minimal 8 karakter.', 'er');
   V = { apiId, apiHash, name: $('name').value.trim() || 'anon', session: '', dbs: {} };
-  PASS = pass;
+  VK = await newVaultKey(pass);
   $('btnLogin').disabled = true;
-  try { await startClient(); } finally { $('btnLogin').disabled = false; }
+  try { await startClient(); if (client && $('rememberLogin').checked) await rememberDevice(VK).catch(() => {}); } finally { $('btnLogin').disabled = false; }
 }
 
 async function startClient() {
@@ -224,5 +227,9 @@ $('btnLogin').onclick = login;
 $('btnCreate').onclick = guard(createDatabase);
 $('btnConnect').onclick = guard(() => connectString($('connStr').value));
 
-if (hasVault()) show('c-unlock'); else show('c-login');
+if (hasVault()) {
+  unlockWithDevice().then(async r => {
+    if (r) { V = r.data; VK = r.vk; await startClient(); } else show('c-unlock');
+  });
+} else show('c-login');
 if (!window.isSecureContext) log('Halaman harus dibuka lewat HTTPS (atau localhost).', 'er');

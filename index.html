@@ -16,6 +16,7 @@
   <section class="card" id="c-unlock" hidden>
     <h2>Buka kunci</h2>
     <div class="row"><input id="unlockPass" type="password" placeholder="Passphrase"><button id="btnUnlock">Buka</button></div>
+    <label class="hint"><input type="checkbox" id="rememberUnlock" checked> Ingat di perangkat ini (refresh tidak minta passphrase lagi)</label>
     <button id="btnWipe" class="sec small">Lupa passphrase? Hapus data lokal</button>
   </section>
 
@@ -24,6 +25,7 @@
     <p class="hint">Ambil <b>api_id</b> dan <b>api_hash</b> di <span class="mono">my.telegram.org</span> → API development tools. Pakai akun Telegram khusus, bukan akun utama.</p>
     <div class="row"><input id="apiId" placeholder="api_id" inputmode="numeric" autocomplete="off"><input id="apiHash" placeholder="api_hash" autocomplete="off"></div>
     <div class="row"><input id="name" placeholder="Nama tampilan (penanda penulis)" autocomplete="off"><input id="newPass" type="password" placeholder="Passphrase lokal (min. 8 karakter)" autocomplete="new-password"></div>
+    <label class="hint"><input type="checkbox" id="rememberLogin" checked> Ingat di perangkat ini (refresh tidak minta passphrase lagi; jangan dipakai di komputer bersama)</label>
     <div class="row"><button id="btnLogin">Login</button></div>
     <div class="row" id="askRow" hidden><input id="askInput" autocomplete="one-time-code"><button id="askBtn">Kirim</button></div>
   </section>
