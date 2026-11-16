@@ -1,6 +1,12 @@
 // Workspace ala pgAdmin: sidebar objek, tab query & tab tabel (data grid + struktur), riwayat, export.
 import { h } from './dom.js';
-import { KIND_LABEL, loadCatalog, loadIndexes, fetchPage, fetchAll, fmt, qname, toCSV, toJSON, download, buildInsert, buildUpdate, buildDelete } from './catalog.js';
+import { KIND_LABEL, loadCatalog, fetchPage, fetchAll, fmt, qi, ql, qname, toCSV, toJSON, download, buildInsert, buildUpdate, buildDelete } from './catalog.js';
+import { loadStructure, loadAllFks, tableDDL, createSchema, dropSchema } from './ddl.js';
+import { renderStructure } from './structure.js';
+import { createTableDialog, importDialog, formDialog, confirmBox, promptBox, popMenu } from './dialogs.js';
+import { dumpTable, dumpAll } from './tools.js';
+import { renderERD, erdToSVGString } from './erd.js';
+import { formatSQL, suggest, wordAt } from './editor.js';
 
 const STARTER = `create table if not exists notes(
   id uuid primary key default gen_random_uuid(),
@@ -10,10 +16,14 @@ const STARTER = `create table if not exists notes(
 insert into notes(body) values ('halo dari tgpg');`;
 const HISTORY_MAX = 50;
 const errMsg = e => e?.message || String(e);
+/** Statement pertama (sampai ';' tingkat atas) — dipakai untuk EXPLAIN. */
+function split1(sql) { const m = /^((?:'(?:[^']|'')*'|"(?:[^"]|"")*"|[^;'"])*)/.exec(sql); return (m ? m[1] : sql).trim(); }
+/** Kursor sedang di dalam string '…'? (hitung kutip tunggal sebelum kursor) */
+function ta_inString(ta) { return ((ta.value.slice(0, ta.selectionStart).match(/'/g) || []).length % 2) === 1; }
 
 /** Render tabel hasil/data. onSort(col) opsional, onCell(col, value) opsional. */
-function renderGrid(fields, rows, { startIndex = 0, sort = null, onSort = null, onCell = null, actions = null } = {}) {
-  const head = h('tr', null, h('th', { class: 'rn' }, '#'));
+function renderGrid(fields, rows, { startIndex = 0, sort = null, onSort = null, onCell = null, actions = null, select = null, fk = null, onEdit = null } = {}) {
+  const head = h('tr', null, select ? h('th', { class: 'sel' }, h('input', { type: 'checkbox', 'aria-label': 'Pilih semua', checked: rows.length > 0 && rows.every(r => select.has(r)), onChange: e => select.toggleAll(e.target.checked) })) : null, h('th', { class: 'rn' }, '#'));
   for (const f of fields) {
     head.append(h('th', { class: onSort ? 'sortable' : '', onClick: onSort ? () => onSort(f.name) : null },
       f.name, sort && sort.col === f.name ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''));
@@ -21,10 +31,12 @@ function renderGrid(fields, rows, { startIndex = 0, sort = null, onSort = null, 
   if (actions) head.append(h('th', { class: 'act' }, ''));
   const body = h('tbody');
   rows.forEach((r, i) => {
-    const tr = h('tr', null, h('td', { class: 'rn' }, startIndex + i + 1));
+    const tr = h('tr', { class: select?.has(r) ? 'picked' : '' }, select ? h('td', { class: 'sel' }, h('input', { type: 'checkbox', 'aria-label': `Pilih baris ${startIndex + i + 1}`, checked: select.has(r), onChange: e => { select.toggle(r, e.target.checked); tr.classList.toggle('picked', e.target.checked); } })) : null, h('td', { class: 'rn' }, startIndex + i + 1));
     for (const f of fields) {
       const v = fmt(r[f.name]);
-      tr.append(h('td', { class: v === null ? 'null' : '', title: v === null ? 'NULL' : v.slice(0, 200), onClick: onCell ? () => onCell(f.name, v) : null }, v === null ? 'NULL' : v));
+      const td = h('td', { class: v === null ? 'null' : '', title: v === null ? 'NULL' : v.slice(0, 200), onClick: onCell ? () => onCell(f.name, v) : null, onDblclick: onEdit ? () => onEdit(r, f.name, td, v) : null }, v === null ? 'NULL' : v);
+      if (fk && v !== null && fk.has(f.name)) td.append(' ', h('a', { class: 'fklink', href: '#', title: `Buka baris terkait di ${fk.get(f.name).refTable}`, onClick: e => { e.preventDefault(); e.stopPropagation(); fk.open(f.name, v); } }, '↗'));
+      tr.append(td);
     }
     if (actions) tr.append(h('td', { class: 'act' }, actions(r)));
     body.append(tr);
@@ -84,6 +96,12 @@ export class Workspace {
     this.tree = h('div', { class: 'tree' });
     this.side = h('aside', { class: 'ws-side' },
       h('div', { class: 'side-head' }, h('span', null, 'Objek'), h('button', { class: 'sec small', title: 'Muat ulang', onClick: () => this.refreshCatalog() }, '↻')),
+      h('div', { class: 'side-tools' },
+        h('button', { class: 'sec small', title: 'Buat tabel baru', onClick: () => createTableDialog(this) }, '+ Tabel'),
+        h('button', { class: 'sec small', title: 'Buat schema baru', onClick: () => this.newSchema() }, '+ Schema'),
+        h('button', { class: 'sec small', title: 'Impor CSV/JSON', onClick: () => importDialog(this) }, 'Impor'),
+        h('button', { class: 'sec small', title: 'Diagram relasi', onClick: () => this.addErdTab() }, 'ERD'),
+        h('button', { class: 'sec small', title: 'Ekspor seluruh database sebagai SQL', onClick: () => this.dumpDb() }, 'Dump')),
       this.tree);
     this.tabbar = h('div', { class: 'tabbar' });
     this.panes = h('div', { class: 'panes' });
@@ -217,9 +235,20 @@ export class Workspace {
     }, 400);
   }
 
+  /** Jalankan DDL/DML sebagai satu op (error Postgres dilempar). */
+  async exec(sql) {
+    const { result } = await this.engine.write(sql);
+    const rs = Array.isArray(result) ? result : [result];
+    const bad = rs.find(r => r?.error);
+    if (bad) throw new Error(bad.error);
+    return rs;
+  }
+  execMany(sqls) { return this.exec(sqls.join(';\n')); }
+
   /* ───────── sidebar ───────── */
   async refreshCatalog() {
     if (!this.engine) return;
+    for (const t of this.tabs) if (t.kind === 'table') t.fks = null;
     try { this.catalog = await loadCatalog(this.engine); } catch (e) { this.tree.replaceChildren(h('div', { class: 'er' }, errMsg(e))); return; }
     this.renderTree();
   }
@@ -227,7 +256,10 @@ export class Workspace {
   renderTree() {
     const out = [];
     for (const [schema, { tables, funcs }] of [...this.catalog].sort(([a], [b]) => (a === 'public' ? -1 : b === 'public' ? 1 : a.localeCompare(b)))) {
-      const sd = h('details', { class: 'schema', open: true }, h('summary', null, h('span', { class: 'ico' }, '◈'), schema));
+      const sd = h('details', { class: 'schema', open: true }, h('summary', null, h('span', { class: 'ico' }, '◈'), h('span', { class: 'tname' }, schema),
+        h('button', { class: 'sec tiny', title: 'Menu schema', 'aria-label': `Menu schema ${schema}`, onClick: e => { e.preventDefault(); e.stopPropagation(); popMenu(e.currentTarget, [
+          { label: 'Buat tabel di sini', onClick: () => createTableDialog(this, { schema }) },
+          ...(schema !== 'public' ? [{ label: 'Hapus schema…', danger: true, onClick: () => formDialog(this, { title: `Hapus schema ${schema}`, note: 'Semua objek di dalamnya ikut hilang bila CASCADE dicentang.', fields: [{ key: 'cascade', label: 'CASCADE', type: 'check' }], build: v => [dropSchema(schema, v.cascade)], submit: 'Hapus' }) }] : [])]); } }, '⋯')));
       if (!tables.length && !funcs.length) sd.append(h('div', { class: 'mu pad' }, 'kosong'));
       for (const t of tables) {
         const key = `${schema}.${t.name}`;
@@ -235,7 +267,8 @@ export class Workspace {
           h('summary', null,
             h('span', { class: 'tname', onClick: e => { e.preventDefault(); this.addTableTab(schema, t.name); this.side.classList.remove('open'); } },
               t.name, t.kind === 'v' || t.kind === 'm' ? h('em', null, ` ${KIND_LABEL[t.kind]}`) : ''),
-            h('button', { class: 'sec tiny', title: 'Buka di tab query', onClick: e => { e.preventDefault(); e.stopPropagation(); this.addQueryTab(`select * from ${qname(schema, t.name)} limit 100;`, true); this.side.classList.remove('open'); } }, 'SQL')),
+            h('button', { class: 'sec tiny', title: 'Buka di tab query', onClick: e => { e.preventDefault(); e.stopPropagation(); this.addQueryTab(`select * from ${qname(schema, t.name)} limit 100;`, true); this.side.classList.remove('open'); } }, 'SQL'),
+            h('button', { class: 'sec tiny', title: 'Menu tabel', 'aria-label': `Menu ${t.name}`, onClick: e => { e.preventDefault(); e.stopPropagation(); this.tableMenu(e.currentTarget, schema, t); } }, '⋯')),
           ...t.cols.map(c => h('div', { class: 'col' }, h('span', { class: c.pk ? 'pk' : '' }, c.pk ? '🔑 ' : '', c.name), h('span', { class: 'mu' }, c.type))));
         sd.append(td);
       }
@@ -285,16 +318,28 @@ export class Workspace {
     const result = h('div', { class: 'result' });
     const insp = h('div', { class: 'inspector', hidden: true });
     const histBox = h('div', { class: 'history', hidden: true });
-    const tab = this.makeTab('query', `Query ${this.seqQuery = (this.seqQuery || 0) + 1}`, h('div', { class: 'pane' }), { ta, status, result, insp, histBox, last: null, n });
+    const sugBox = h('div', { class: 'sugbar', hidden: true, 'aria-label': 'Saran' });
+    const tab = this.makeTab('query', `Query ${this.seqQuery = (this.seqQuery || 0) + 1}`, h('div', { class: 'pane' }), { ta, status, result, insp, histBox, sugBox, sug: [], last: null, n });
     const runBtn = h('button', { onClick: () => this.runQuery(tab) }, 'Run');
     tab.runBtn = runBtn;
     tab.pane.append(ta,
       h('div', { class: 'row tools' }, runBtn,
+        h('button', { class: 'sec', title: 'Rencana eksekusi (EXPLAIN)', onClick: () => this.runQuery(tab, 'explain ') }, 'Explain'),
+        h('button', { class: 'sec', title: 'EXPLAIN ANALYZE: menjalankan query baca-saja dan mengukur waktu', onClick: () => this.runQuery(tab, 'explain (analyze, buffers) ') }, 'Analyze'),
+        h('button', { class: 'sec', title: 'Rapikan SQL (Ctrl+Shift+F)', onClick: () => this.formatEditor(tab) }, 'Format'),
+        h('button', { class: 'sec', title: 'Simpan query ini', onClick: () => this.saveSnippet(tab) }, 'Simpan'),
         h('button', { class: 'sec', onClick: () => { this.renderHistory(tab); histBox.hidden = !histBox.hidden; } }, 'Riwayat'),
         h('button', { class: 'sec', onClick: () => this.exportResult(tab, 'csv') }, 'CSV'),
         h('button', { class: 'sec', onClick: () => this.exportResult(tab, 'json') }, 'JSON'), status),
-      histBox, result, insp);
-    ta.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.runQuery(tab); } });
+      tab.sugBox, histBox, result, insp);
+    ta.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); this.runQuery(tab); }
+      else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); this.formatEditor(tab); }
+      else if (e.key === 'Tab' && !e.shiftKey && tab.sug?.length) { e.preventDefault(); this.applySuggestion(tab, tab.sug[0]); }
+      else if (e.key === 'Escape' && tab.sug?.length) { tab.sug = []; this.renderSuggestions(tab); }
+    });
+    ta.addEventListener('input', () => this.updateSuggestions(tab));
+    ta.addEventListener('click', () => this.updateSuggestions(tab));
     ta.addEventListener('input', () => this.saveSoon());
     this.ensurePlus();
     this.activate(tab);
@@ -302,8 +347,45 @@ export class Workspace {
     return tab;
   }
 
+  formatEditor(tab) {
+    const ta = tab.ta, hasSel = ta.selectionStart !== ta.selectionEnd;
+    const a = hasSel ? ta.selectionStart : 0, b = hasSel ? ta.selectionEnd : ta.value.length;
+    ta.setRangeText(formatSQL(ta.value.slice(a, b)), a, b, 'end'); ta.focus(); this.saveSoon();
+  }
+
+  updateSuggestions(tab) {
+    const { word } = wordAt(tab.ta.value, tab.ta.selectionStart);
+    tab.sug = ta_inString(tab.ta) ? [] : suggest(word, this.catalog);
+    this.renderSuggestions(tab);
+  }
+
+  renderSuggestions(tab) {
+    tab.sugBox.hidden = !tab.sug.length;
+    tab.sugBox.replaceChildren(h('span', { class: 'mu' }, 'Tab ⇥ '), ...tab.sug.map(x => h('button', { class: 'sec tiny', title: x.kind, onMousedown: e => { e.preventDefault(); this.applySuggestion(tab, x); } }, x.text)));
+  }
+
+  applySuggestion(tab, x) {
+    const ta = tab.ta, pos = ta.selectionStart, { start } = wordAt(ta.value, pos);
+    ta.setRangeText(x.text, start, pos, 'end'); tab.sug = []; this.renderSuggestions(tab); ta.focus(); this.saveSoon();
+  }
+
+  get snippets() { try { return JSON.parse(localStorage.getItem('tgpg:snip:' + this.dbId)) || []; } catch { return []; } }
+  set snippets(v) { try { localStorage.setItem('tgpg:snip:' + this.dbId, JSON.stringify(v.slice(0, 100))); } catch {} }
+
+  async saveSnippet(tab) {
+    const sql = tab.ta.value.trim(); if (!sql) return;
+    const name = await promptBox('Simpan query', 'Nama query:', sql.replace(/\s+/g, ' ').slice(0, 40));
+    if (!name) return;
+    this.snippets = [{ name, sql }, ...this.snippets.filter(x => x.name !== name)];
+    tab.status.textContent = `Tersimpan: ${name}`;
+  }
+
   renderHistory(tab) {
-    tab.histBox.replaceChildren(...(this.history.length ? this.history.map(q =>
+    const snips = this.snippets;
+    tab.histBox.replaceChildren(...(snips.length ? [h('div', { class: 'mu pad' }, 'Tersimpan'), ...snips.map(x => h('div', { class: 'hitem snip', title: x.sql, onClick: () => { tab.ta.value = x.sql; tab.histBox.hidden = true; this.saveSoon(); } },
+      h('b', null, x.name), h('button', { class: 'sec tiny danger', title: 'Hapus', onClick: e => { e.stopPropagation(); this.snippets = this.snippets.filter(y => y.name !== x.name); this.renderHistory(tab); } }, '×')))] : []),
+      ...(snips.length ? [h('div', { class: 'mu pad' }, 'Riwayat')] : []),
+      ...(this.history.length ? this.history.map(q =>
       h('div', { class: 'hitem', title: q, onClick: () => { tab.ta.value = q; tab.histBox.hidden = true; this.saveSoon(); } }, q.replace(/\s+/g, ' ').slice(0, 140)))
       : [h('div', { class: 'mu pad' }, 'Belum ada riwayat.')]));
   }
@@ -313,11 +395,12 @@ export class Workspace {
     this.save();
   }
 
-  async runQuery(tab) {
+  async runQuery(tab, prefix = '') {
     if (!this.engine || tab.runBtn.disabled) return;
     const sel = tab.ta.value.slice(tab.ta.selectionStart, tab.ta.selectionEnd).trim();
-    const sql = sel || tab.ta.value.trim();
+    let sql = sel || tab.ta.value.trim();
     if (!sql) return;
+    if (prefix) { const first = split1(sql); sql = prefix + first; }
     tab.runBtn.disabled = true; tab.status.textContent = 'Menjalankan…'; tab.insp.hidden = true;
     const t0 = performance.now();
     try {
@@ -328,7 +411,7 @@ export class Workspace {
       this.renderResult(tab, sets);
       const rowInfo = tab.last ? `${tab.last.rows.length} baris · ` : '';
       tab.status.textContent = `${r.kind === 'write' ? `ditulis sebagai #${r.id} · ` : ''}${rowInfo}${ms} ms`;
-      this.pushHistory(sql);
+      if (!prefix) this.pushHistory(sql);
       if (r.kind === 'write') this.refreshCatalog();
     } catch (e) {
       tab.last = null; tab.result.replaceChildren(h('div', { class: 'er' }, errMsg(e))); tab.status.textContent = '';
@@ -364,7 +447,9 @@ export class Workspace {
   addTableTab(schema, name) {
     const existing = this.tabs.find(t => t.kind === 'table' && t.schema === schema && t.name === name);
     if (existing) { this.activate(existing); this.loadTable(existing); return existing; }
-    const filter = h('input', { class: 'filter', placeholder: `Filter, mis.  id > 10 and body like '%a%'`, onKeydown: e => { if (e.key === 'Enter') apply(); } });
+    const filter = h('input', { class: 'filter', placeholder: `Filter SQL, mis.  id > 10 and body like '%a%'`, 'aria-label': 'Filter SQL', onKeydown: e => { if (e.key === 'Enter') apply(); } });
+    const search = h('input', { class: 'filter', placeholder: 'Cari di semua kolom…', 'aria-label': 'Cari di semua kolom', onKeydown: e => { if (e.key === 'Enter') apply(); } });
+    const selBar = h('div', { class: 'row tools selbar', hidden: true });
     const gridBox = h('div', { class: 'gridbox' });
     const struct = h('div', { class: 'struct', hidden: true });
     const insp = h('div', { class: 'inspector', hidden: true });
@@ -374,20 +459,21 @@ export class Workspace {
       ...[25, 50, 100, 500].map(n => h('option', { value: n, selected: n === 50 }, `${n}/hal`)));
     const mk = (label, fn, title) => h('button', { class: 'sec small', title, onClick: fn }, label);
     const tab = this.makeTab('table', name, h('div', { class: 'pane' }), {
-      ws: this, schema, name, page: 0, size: 50, sort: null, where: '', view: 'data', total: 0, fields: [], rows: [], gridBox, struct, insp, status, pageInfo,
+      ws: this, schema, name, page: 0, size: 50, sort: null, where: '', search: '', view: 'data', total: 0, fields: [], rows: [], gridBox, struct, insp, status, pageInfo, filterEl: filter, searchEl: search, selBar, sel: new Map(), fks: null,
     });
-    const apply = () => { tab.where = filter.value; tab.page = 0; this.loadTable(tab); };
+    const apply = () => { tab.where = filter.value; tab.search = search.value; tab.page = 0; this.loadTable(tab); };
     const maxPage = () => Math.max(0, Math.ceil(tab.total / tab.size) - 1);
     const go = p => { tab.page = Math.min(Math.max(0, p), maxPage()); this.loadTable(tab); };
     const dataBtn = mk('Data', () => this.setView(tab, 'data')), structBtn = mk('Struktur', () => this.setView(tab, 'struct'));
-    tab.dataBtn = dataBtn; tab.structBtn = structBtn; dataBtn.classList.add('on');
+    tab.dataBtn = dataBtn; tab.selBar = selBar; tab.structBtn = structBtn; dataBtn.classList.add('on');
     tab.pager = h('span', { class: 'pager' }, mk('«', () => go(0)), mk('‹', () => go(tab.page - 1)), pageInfo, mk('›', () => go(tab.page + 1)), mk('»', () => go(maxPage())));
     tab.addBtn = mk('+ Baris', () => this.openRowDialog(tab, 'insert', null), 'Tambah baris');
-    tab.dataTools = h('div', { class: 'row tools' }, filter, mk('Terapkan', apply), mk('↻', () => this.loadTable(tab), 'Muat ulang'), size, tab.pager, tab.addBtn,
-      mk('CSV', () => this.exportTable(tab, 'csv')), mk('JSON', () => this.exportTable(tab, 'json')));
+    tab.dataTools = h('div', { class: 'row tools' }, filter, search, mk('Terapkan', apply), mk('↻', () => this.loadTable(tab), 'Muat ulang'), size, tab.pager, tab.addBtn,
+      mk('Impor', () => importDialog(this, { schema, name }), 'Impor CSV/JSON ke tabel ini'),
+      mk('CSV', () => this.exportTable(tab, 'csv')), mk('JSON', () => this.exportTable(tab, 'json')), mk('SQL', () => this.exportTable(tab, 'sql'), 'Ekspor struktur + data sebagai SQL'));
     tab.pane.append(
       h('div', { class: 'row tools' }, h('b', null, `${schema}.${name}`), h('span', { class: 'spacer' }), dataBtn, structBtn, status),
-      tab.dataTools, gridBox, insp, struct);
+      tab.dataTools, selBar, gridBox, insp, struct);
     this.ensurePlus();
     this.activate(tab);
     this.loadTable(tab);
@@ -397,7 +483,7 @@ export class Workspace {
   setView(tab, view) {
     tab.view = view;
     tab.dataBtn.classList.toggle('on', view === 'data'); tab.structBtn.classList.toggle('on', view === 'struct');
-    tab.dataTools.hidden = view !== 'data'; tab.gridBox.hidden = view !== 'data'; tab.insp.hidden = true; tab.struct.hidden = view !== 'struct';
+    tab.dataTools.hidden = view !== 'data'; tab.selBar.hidden = view !== 'data' || !tab.sel.size; tab.gridBox.hidden = view !== 'data'; tab.insp.hidden = true; tab.struct.hidden = view !== 'struct';
     if (view === 'struct') this.renderStruct(tab); else this.loadTable(tab);
   }
 
@@ -413,15 +499,24 @@ export class Workspace {
     tab.status.textContent = 'Memuat…';
     try {
       const meta = this.tableMeta(tab);
-      const q = () => ({ schema: tab.schema, name: tab.name, where: tab.where, orderBy: tab.sort?.col, dir: tab.sort?.dir, limit: tab.size, offset: tab.page * tab.size, pkCols: meta.editable ? meta.pkCols : [] });
+      if (!tab.fks) { try { tab.fks = (await loadStructure(this.engine, tab.schema, tab.name)).fks.filter(f => f.cols.length === 1); } catch { tab.fks = []; } }
+      const q = () => ({ schema: tab.schema, name: tab.name, where: tab.where, search: tab.search, searchCols: meta.cols.map(c => c.name), orderBy: tab.sort?.col, dir: tab.sort?.dir, limit: tab.size, offset: tab.page * tab.size, pkCols: meta.editable ? meta.pkCols : [] });
       let r = await fetchPage(this.engine, q());
       const last = Math.max(0, Math.ceil(r.total / tab.size) - 1);
       if (tab.page > last) { tab.page = last; r = await fetchPage(this.engine, q()); }
       tab.addBtn.disabled = !meta.editable;
       tab.addBtn.title = meta.editable ? 'Tambah baris' : (meta.t && meta.t.kind !== 'r' && meta.t.kind !== 'p' ? 'View: hanya-baca' : 'Tabel tanpa primary key: hanya-baca');
       Object.assign(tab, { total: r.total, fields: r.fields, rows: r.rows });
+      tab.sel.clear(); this.renderSelBar(tab, meta);
+      const fkMap = new Map(tab.fks.map(f => [f.cols[0], f]));
+      const select = meta.editable ? {
+        has: r => tab.sel.has(r), toggle: (r, on) => { on ? tab.sel.set(r, true) : tab.sel.delete(r); this.renderSelBar(tab, meta); },
+        toggleAll: on => { tab.sel.clear(); if (on) r.rows.forEach(x => tab.sel.set(x, true)); this.renderSelBar(tab, meta); this.syncChecks(tab); },
+      } : null;
       tab.gridBox.replaceChildren(r.fields.length
         ? renderGrid(r.fields, r.rows, {
+          select, fk: fkMap.size ? { has: c => fkMap.has(c), get: c => fkMap.get(c), open: (c, v) => this.openRelated(fkMap.get(c), v) } : null,
+          onEdit: meta.editable ? (row, col, td, v) => this.editCell(tab, meta, row, col, td, v) : null,
           startIndex: tab.page * tab.size, sort: tab.sort,
           onSort: col => { tab.sort = tab.sort?.col === col ? (tab.sort.dir === 'asc' ? { col, dir: 'desc' } : null) : { col, dir: 'asc' }; tab.page = 0; this.loadTable(tab); },
           onCell: (c, v) => { tab.insp.hidden = false; tab.insp.replaceChildren(h('b', null, c + ': '), v === null ? h('em', null, 'NULL') : v); },
@@ -439,6 +534,122 @@ export class Workspace {
     }
   }
 
+  syncChecks(tab) {
+    [...tab.gridBox.querySelectorAll('tbody tr')].forEach((tr, i) => {
+      const on = tab.sel.has(tab.rows[i]); tr.classList.toggle('picked', on);
+      const cb = tr.querySelector('td.sel input'); if (cb) cb.checked = on;
+    });
+  }
+
+  renderSelBar(tab, meta) {
+    const n = tab.sel.size; tab.selBar.hidden = !n || tab.view !== 'data';
+    if (!n) return;
+    const rows = [...tab.sel.keys()];
+    tab.selBar.replaceChildren(h('b', null, `${n} baris dipilih`),
+      h('button', { class: 'sec small', onClick: () => this.copyRows(tab, rows) }, 'Salin (TSV)'),
+      n === 1 ? h('button', { class: 'sec small', onClick: () => this.openRowDialog(tab, 'insert', rows[0]) }, 'Duplikat') : null,
+      h('button', { class: 'sec small danger', onClick: () => this.deleteRows(tab, rows) }, 'Hapus terpilih'),
+      h('button', { class: 'sec small', onClick: () => { tab.sel.clear(); this.renderSelBar(tab, meta); this.syncChecks(tab); } }, 'Batal pilih'));
+  }
+
+  async copyRows(tab, rows) {
+    const tsv = [tab.fields.map(f => f.name).join('\t'), ...rows.map(r => tab.fields.map(f => (fmt(r[f.name]) ?? '').replace(/[\t\r\n]+/g, ' ')).join('\t'))].join('\n');
+    try { await navigator.clipboard.writeText(tsv); tab.status.textContent = `${rows.length} baris disalin`; } catch { tab.status.textContent = 'Gagal menyalin (izin clipboard).'; }
+  }
+
+  async deleteRows(tab, rows) {
+    const { cols, pkCols } = this.tableMeta(tab);
+    if (!await confirmBox(`Hapus ${rows.length} baris dari ${tab.schema}.${tab.name}? Berlaku untuk semua anggota.`)) return;
+    try {
+      const rs = await this.execMany(rows.map(r => buildDelete(tab.schema, tab.name, cols, pkCols, pkCols.map((c, i) => r['__pk' + i]))));
+      const n = rs.reduce((a, r) => a + (r?.affectedRows || 0), 0);
+      tab.status.textContent = `${n} baris dihapus`;
+      await this.loadTable(tab);
+    } catch (e) { tab.status.textContent = errMsg(e); }
+  }
+
+  /** Edit sel langsung (klik ganda): Enter simpan, Esc batal, ∅ = NULL. */
+  editCell(tab, meta, row, col, td, cur) {
+    if (td.querySelector('input.cell')) return;
+    const c = meta.cols.find(x => x.name === col);
+    if (!c || c.generated === 's') { tab.status.textContent = 'Kolom ini dihitung otomatis (read-only).'; return; }
+    const prev = td.textContent, wasNull = cur === null;
+    const inp = h('input', { class: 'cell', type: 'text', value: cur ?? '', spellcheck: false, 'aria-label': `Edit ${col}` });
+    let done = false;
+    const restore = () => { td.replaceChildren(document.createTextNode(prev)); };
+    const commit = async nul => {
+      if (done) return; done = true;
+      const nv = nul ? null : inp.value;
+      if ((nv === null && wasNull) || nv === cur) { restore(); return; }
+      td.classList.add('saving');
+      try {
+        const r = (await this.execMany([buildUpdate(tab.schema, tab.name, meta.cols, meta.pkCols, meta.pkCols.map((p, i) => row['__pk' + i]), { [col]: nv === null ? { mode: 'null' } : { mode: 'value', v: nv } })]))[0];
+        if (r?.affectedRows === 0) tab.status.textContent = 'Baris sudah tidak ada (dihapus pengguna lain?)';
+        await this.loadTable(tab);
+      } catch (e) { tab.status.textContent = errMsg(e); td.classList.remove('saving'); restore(); }
+    };
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); commit(false); } else if (e.key === 'Escape') { done = true; restore(); } });
+    inp.addEventListener('blur', () => { setTimeout(() => { if (!done) { done = true; restore(); } }, 120); });
+    td.replaceChildren(inp, h('button', { class: 'sec tiny', title: 'Set NULL', onMousedown: e => { e.preventDefault(); commit(true); } }, '∅'));
+    inp.focus(); inp.select();
+  }
+
+  /** Buka tabel rujukan FK dengan filter pada nilai ini. */
+  openRelated(fk, value) {
+    const tab = this.addTableTab(fk.refSchema, fk.refTable);
+    tab.where = `${qi(fk.refCols[0])} = ${ql(value)}`; tab.filterEl.value = tab.where; tab.page = 0;
+    this.loadTable(tab);
+  }
+
+  async newSchema() {
+    formDialog(this, { title: 'Buat schema', fields: [{ key: 'name', label: 'Nama schema' }], build: v => [createSchema(v.name)] });
+  }
+
+  tableMenu(anchor, schema, t) {
+    const full = qname(schema, t.name);
+    popMenu(anchor, [
+      { label: 'Buka data', onClick: () => { this.addTableTab(schema, t.name); this.side.classList.remove('open'); } },
+      { label: 'Lihat struktur', onClick: () => { const tab = this.addTableTab(schema, t.name); this.setView(tab, 'struct'); this.side.classList.remove('open'); } },
+      { label: 'Impor ke tabel ini', onClick: () => importDialog(this, { schema, name: t.name }) },
+      { label: 'Ekspor SQL', onClick: async () => { try { download(`${t.name}.sql`, await dumpTable(this.engine, schema, t.name), 'text/plain'); } catch (e) { this.statEl.textContent = errMsg(e); } } },
+      { label: 'Salin DDL', onClick: async () => { try { await navigator.clipboard.writeText(tableDDL(await loadStructure(this.engine, schema, t.name))); } catch (e) { this.statEl.textContent = errMsg(e); } } },
+      { label: 'Salin nama', onClick: () => navigator.clipboard?.writeText(full) },
+    ]);
+  }
+
+  async dumpDb() {
+    try {
+      const sql = await dumpAll(this.engine, this.catalog, await loadAllFks(this.engine));
+      download(`${(this.titleEl.textContent || 'db').replace(/[^\w.-]+/g, '_')}-${new Date().toISOString().slice(0, 10)}.sql`, sql, 'text/plain');
+    } catch (e) { this.statEl.textContent = 'Dump gagal: ' + errMsg(e); }
+  }
+
+  /* ───────── tab ERD ───────── */
+  async addErdTab() {
+    const existing = this.tabs.find(t => t.kind === 'erd');
+    if (existing) { this.activate(existing); this.loadErd(existing); return existing; }
+    const box = h('div', { class: 'erdbox' }), status = h('span', { class: 'mu' });
+    const tab = this.makeTab('erd', 'ERD', h('div', { class: 'pane' }), { box, status });
+    tab.pane.append(h('div', { class: 'row tools' }, h('b', null, 'Diagram relasi'), h('span', { class: 'spacer' }),
+      h('button', { class: 'sec small', onClick: () => this.loadErd(tab) }, '↻'),
+      h('button', { class: 'sec small', onClick: () => tab.svg && download(`erd-${new Date().toISOString().slice(0, 10)}.svg`, erdToSVGString(tab.svg), 'image/svg+xml') }, 'Unduh SVG'), status),
+      h('div', { class: 'mu pad' }, 'Klik ganda tabel untuk membuka datanya.'), box);
+    this.ensurePlus(); this.activate(tab); this.loadErd(tab);
+    return tab;
+  }
+
+  async loadErd(tab) {
+    tab.status.textContent = 'Memuat…';
+    try {
+      const fks = await loadAllFks(this.engine);
+      const tables = [];
+      for (const [schema, { tables: ts }] of this.catalog) for (const t of ts) if (t.kind === 'r' || t.kind === 'p') tables.push({ schema, name: t.name, cols: t.cols });
+      if (!tables.length) { tab.box.replaceChildren(h('div', { class: 'mu pad' }, 'Belum ada tabel.')); tab.svg = null; tab.status.textContent = ''; return; }
+      tab.svg = renderERD(tables, fks, { onOpen: (s, n) => this.addTableTab(s, n) });
+      tab.box.replaceChildren(tab.svg); tab.status.textContent = `${tables.length} tabel · ${fks.length} relasi`;
+    } catch (e) { tab.box.replaceChildren(h('div', { class: 'er' }, errMsg(e))); tab.status.textContent = ''; }
+  }
+
   /* ───────── edit baris ───────── */
   async deleteRow(tab, row) {
     const { cols, pkCols } = this.tableMeta(tab);
@@ -454,13 +665,17 @@ export class Workspace {
   }
 
   openRowDialog(tab, mode, row) {
-    const { cols, pkCols } = this.tableMeta(tab);
+    const { cols: allCols, pkCols } = this.tableMeta(tab);
+    const cols = allCols.filter(c => c.generated !== 's');   // kolom hasil hitung tidak bisa diisi
     if (!cols.length) return;
+    const dup = mode === 'insert' && row;
     const fields = cols.map(c => {
       const orig = mode === 'edit' ? fmt(row[c.name]) : null;
-      const input = h('textarea', { class: 'fld', rows: 1, spellcheck: false, value: orig ?? '', 'aria-label': c.name,
+      const auto = /^nextval\(/.test(c.def || '') || !!c.identity;
+      const start = dup ? (auto ? '' : fmt(row[c.name])) : orig;
+      const input = h('textarea', { class: 'fld', rows: 1, spellcheck: false, value: start ?? '', 'aria-label': c.name,
         placeholder: mode === 'insert' ? (c.def ? `default: ${c.def}` : c.notnull ? 'wajib diisi' : 'kosong = default/NULL') : '' });
-      const nul = h('input', { type: 'checkbox', checked: mode === 'edit' && orig === null, 'aria-label': `NULL untuk ${c.name}` });
+      const nul = h('input', { type: 'checkbox', checked: (mode === 'edit' && orig === null) || (dup && !auto && start === null), 'aria-label': `NULL untuk ${c.name}` });
       nul.addEventListener('change', () => { input.disabled = nul.checked; });
       input.disabled = nul.checked;
       const grow = () => { input.style.height = 'auto'; input.style.height = Math.min(160, input.scrollHeight + 2) + 'px'; };   // auto-tinggi (CSSOM, aman dari CSP)
@@ -474,7 +689,7 @@ export class Workspace {
     const close = () => { backdrop.remove(); document.removeEventListener('keydown', onKey); };
     const onKey = e => { if (e.key === 'Escape') close(); };
     const dlg = h('div', { class: 'dialog', role: 'dialog', 'aria-modal': 'true', 'aria-label': mode === 'insert' ? 'Tambah baris' : 'Edit baris' },
-      h('h3', null, `${mode === 'insert' ? 'Tambah baris' : 'Edit baris'} · ${tab.schema}.${tab.name}`),
+      h('h3', null, `${dup ? 'Duplikat baris' : mode === 'insert' ? 'Tambah baris' : 'Edit baris'} · ${tab.schema}.${tab.name}`),
       h('div', { class: 'fields' }, fields.map(f => f.node)), err,
       h('div', { class: 'row' }, save, h('button', { class: 'sec', onClick: close }, 'Batal')));
     const backdrop = h('div', { class: 'backdrop', onClick: e => { if (e.target === backdrop) close(); } }, dlg);
@@ -516,23 +731,12 @@ export class Workspace {
     }
   }
 
-  async renderStruct(tab) {
-    const t = this.catalog.get(tab.schema)?.tables.find(x => x.name === tab.name);
-    const cols = t?.cols || [];
-    const box = [h('div', { class: 'grid' }, h('table', null,
-      h('thead', null, h('tr', null, ...['Kolom', 'Tipe', 'Null?', 'Default', 'PK'].map(x => h('th', null, x)))),
-      h('tbody', null, ...cols.map(c => h('tr', null, h('td', null, c.name), h('td', null, c.type), h('td', null, c.notnull ? 'tidak' : 'ya'),
-        h('td', { class: c.def ? '' : 'null' }, c.def || '—'), h('td', null, c.pk ? '🔑' : '')))))) ];
-    try {
-      const idx = await loadIndexes(this.engine, tab.schema, tab.name);
-      box.push(h('h3', null, 'Index'), idx.length ? h('div', { class: 'idxlist' }, ...idx.map(i => h('div', { class: 'mono' }, i.indexdef))) : h('div', { class: 'mu pad' }, 'Tidak ada index.'));
-    } catch (e) { box.push(h('div', { class: 'er' }, errMsg(e))); }
-    tab.struct.replaceChildren(...box);
-  }
+  renderStruct(tab) { return renderStructure(this, tab); }
 
   async exportTable(tab, type) {
     try {
-      const { fields, rows } = await fetchAll(this.engine, { schema: tab.schema, name: tab.name, where: tab.where, orderBy: tab.sort?.col, dir: tab.sort?.dir });
+      if (type === 'sql') { download(`${tab.name}.sql`, await dumpTable(this.engine, tab.schema, tab.name), 'text/plain'); return; }
+      const { fields, rows } = await fetchAll(this.engine, { schema: tab.schema, name: tab.name, where: tab.where, search: tab.search, searchCols: this.tableMeta(tab).cols.map(c => c.name), orderBy: tab.sort?.col, dir: tab.sort?.dir });
       if (type === 'csv') download(`${tab.name}.csv`, toCSV(fields, rows), 'text/csv');
       else download(`${tab.name}.json`, toJSON(fields, rows), 'application/json');
     } catch (e) { tab.status.textContent = errMsg(e); }

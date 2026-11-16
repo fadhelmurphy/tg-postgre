@@ -80,7 +80,7 @@ with sync_playwright() as p:
     # ── struktur & export
     pg.locator(f'{ACT} button', has_text='Struktur').click(); pg.wait_for_timeout(500)
     st = pg.inner_text(f'{ACT} .struct')
-    ck('struktur: kolom, PK, default deterministik, index', all(x in st for x in ['created_at', '🔑', 'tg_now', 'notes_n_idx']))
+    ck('struktur: kolom, PK, default portabel, index', all(x in st for x in ['created_at', '🔑', 'now()', 'notes_n_idx']))
     pg.locator(f'{ACT} button', has_text='Data').click(); pg.wait_for_timeout(400)
     with pg.expect_download() as d: pg.locator(f'{ACT} button', has_text='CSV').click()
     raw = open(d.value.path(), 'rb').read().decode()

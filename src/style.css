@@ -111,3 +111,39 @@ button.danger:hover{background:#5a2323}
 .invite{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}.invite input[type=text]{min-width:0;flex:1 1 160px}.invite input[type=checkbox]{flex:none;min-width:0;width:auto}.invite .mu,.invite .ok,.invite .er{flex:1 1 100%;font-size:12px}
 .members{display:flex;flex-direction:column;gap:6px;margin:8px 0}.mrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.mname{flex:1 1 200px;min-width:0;overflow-wrap:anywhere;font-size:13px}.mst{font-size:12px}.mst.pending{color:#b45309}.mst.removed{color:#b91c1c}
 .diag{display:flex;flex-direction:column;gap:4px;margin-top:8px;font-size:13px;overflow-wrap:anywhere}
+
+/* ───────── fitur lanjutan: struktur, import, ERD, editor ───────── */
+.side-tools{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px}
+.tree .tname{overflow:hidden;text-overflow:ellipsis}
+.tree summary .tiny{opacity:.55}.tree summary:hover .tiny{opacity:1}
+.sechead{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--mu);margin:14px 0 6px}
+.sechead .spacer{flex:1}
+.sqlprev{background:#0c0e12;border:1px solid var(--bd);border-radius:6px;padding:8px;margin:6px 0 10px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow:auto;font:12px ui-monospace,Menlo,monospace}
+.sqlprev.er{color:var(--er)}
+.dialog.wide{width:min(860px,100%)}
+.frow.chk{grid-template-columns:auto 1fr;align-items:center}.frow.chk .fname{grid-column:2;order:2}.frow.chk input{flex:none;min-width:0;width:auto}
+.frow select[multiple]{min-width:0;width:100%;grid-column:1 / -1}
+.frow input[type=text],.frow select{grid-column:1 / -1;min-width:0;width:100%}
+.ctcols{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.ctrow{display:grid;grid-template-columns:1.2fr 1.2fr auto auto auto 1fr auto;gap:6px;align-items:center}
+.ctrow input[type=text]{min-width:0}.ctrow input[type=checkbox]{flex:none;min-width:0;width:auto;margin-right:3px;vertical-align:middle}.ctrow label{white-space:nowrap;font-size:12px}
+.mapbox{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.maprow{display:grid;grid-template-columns:minmax(80px,1fr) auto minmax(120px,1.4fr);gap:8px;align-items:center}
+.maprow input,.maprow select{min-width:0;width:100%}
+.importprev .grid{max-height:180px}
+.popmenu{position:fixed;z-index:60;background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:4px;display:flex;flex-direction:column;min-width:170px;box-shadow:0 8px 24px #000a}
+.popmenu button{text-align:left;background:transparent;padding:6px 10px}.popmenu button:hover{background:#2a2f3a}
+button.danger-btn{background:#8b2b2b}
+.fklink{color:var(--ac);text-decoration:none;margin-left:2px}
+.grid td input.cell{min-width:120px;width:100%;padding:2px 6px}
+.grid td.saving{opacity:.5}
+.grid th.sel,.grid td.sel{width:28px;text-align:center;background:#14171d;position:sticky;left:0}
+.grid td.sel input,.grid th.sel input{flex:none;min-width:0;width:auto;padding:0;margin:0}
+.grid tr.picked td{background:#1c2a40}
+.selbar{background:#12151b;border:1px solid var(--bd);border-radius:6px;padding:6px 8px}
+.sugbar{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin:-2px 0 8px}
+.hitem.snip{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.erdbox{overflow:auto;border:1px solid var(--bd);border-radius:6px;max-height:70vh;background:#0f1115}
+.erdbox svg{display:block}
+.erd-t:focus{outline:2px solid var(--ac)}
+@media (max-width:820px){.ctrow{grid-template-columns:1fr 1fr}.maprow{grid-template-columns:1fr}}

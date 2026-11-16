@@ -11,7 +11,8 @@ order by 1, 2`;
 
 const COLS_SQL = String.raw`select n.nspname as schema, c.relname as tbl, a.attname as name,
   format_type(a.atttypid, a.atttypmod) as type, a.attnotnull as notnull,
-  coalesce(i.indisprimary, false) as pk, pg_get_expr(d.adbin, d.adrelid) as def
+  coalesce(i.indisprimary, false) as pk, pg_get_expr(d.adbin, d.adrelid) as def,
+  a.attidentity::text as identity, a.attgenerated::text as generated
 from pg_attribute a
 join pg_class c on c.oid = a.attrelid
 join pg_namespace n on n.oid = c.relnamespace
@@ -37,7 +38,7 @@ export async function loadCatalog(engine) {
     const t = { schema: r.schema, name: r.name, kind: r.kind, cols: [] };
     get(r.schema).tables.push(t); byKey.set(`${r.schema}.${r.name}`, t);
   }
-  for (const r of cols.rows) byKey.get(`${r.schema}.${r.tbl}`)?.cols.push({ name: r.name, type: r.type, notnull: r.notnull, pk: r.pk, def: r.def });
+  for (const r of cols.rows) byKey.get(`${r.schema}.${r.tbl}`)?.cols.push({ name: r.name, type: r.type, notnull: r.notnull, pk: r.pk, def: r.def, identity: r.identity || '', generated: r.generated || '' });
   for (const r of funcs.rows) get(r.schema).funcs.push({ name: r.name, args: r.args });
   return schemas;
 }
@@ -47,16 +48,18 @@ export async function loadIndexes(engine, schema, name) {
   return r.rows;
 }
 
-function cond(where) {
+function cond(where, search = '', searchCols = []) {
+  const parts = [];
   const w = (where || '').trim();
-  if (!w) return '';
-  if (w.includes(';')) throw new Error('Filter tidak boleh mengandung ";"');
-  return ` where ${w}`;
+  if (w) { if (w.includes(';')) throw new Error('Filter tidak boleh mengandung ";"'); parts.push(`(${w})`); }
+  const q = (search || '').trim();
+  if (q && searchCols.length) parts.push('(' + searchCols.map(c => `${qi(c)}::text ilike ${ql('%' + q.replace(/[\\%_]/g, m => '\\' + m) + '%')}`).join(' or ') + ')');
+  return parts.length ? ` where ${parts.join(' and ')}` : '';
 }
 
 /** Satu halaman data tabel + total baris. */
-export async function fetchPage(engine, { schema, name, where = '', orderBy = null, dir = 'asc', limit = 50, offset = 0, pkCols = [] }) {
-  const from = qname(schema, name), w = cond(where);
+export async function fetchPage(engine, { schema, name, where = '', search = '', searchCols = [], orderBy = null, dir = 'asc', limit = 50, offset = 0, pkCols = [] }) {
+  const from = qname(schema, name), w = cond(where, search, searchCols);
   const o = orderBy ? ` order by ${qi(orderBy)} ${dir === 'desc' ? 'desc' : 'asc'}` : '';
   const pk = pkCols.map((c, i) => `, ${qi(c)}::text as __pk${i}`).join('');   // nilai PK sebagai teks (presisi penuh) untuk edit/hapus
   const [cnt, data] = await engine.read(`select count(*)::int as n from ${from}${w};\nselect *${pk} from ${from}${w}${o} limit ${limit | 0} offset ${offset | 0}`);
@@ -64,9 +67,9 @@ export async function fetchPage(engine, { schema, name, where = '', orderBy = nu
 }
 
 /** Semua baris (untuk export), dengan filter/urutan yang sama. */
-export async function fetchAll(engine, { schema, name, where = '', orderBy = null, dir = 'asc' }) {
+export async function fetchAll(engine, { schema, name, where = '', search = '', searchCols = [], orderBy = null, dir = 'asc' }) {
   const o = orderBy ? ` order by ${qi(orderBy)} ${dir === 'desc' ? 'desc' : 'asc'}` : '';
-  const [data] = await engine.read(`select * from ${qname(schema, name)}${cond(where)}${o}`);
+  const [data] = await engine.read(`select * from ${qname(schema, name)}${cond(where, search, searchCols)}${o}`);
   return { fields: data.fields, rows: data.rows };
 }
 
