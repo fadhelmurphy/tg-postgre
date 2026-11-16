@@ -78,6 +78,11 @@ export class Workspace {
     this.sharePanel = h('div', { class: 'ws-share', hidden: true },
       h('div', { class: 'mu' }, 'Connection string (berisi kunci enkripsi, bagikan hanya ke orang tepercaya):'), this.shareStr,
       h('button', { class: 'sec small', onClick: () => navigator.clipboard.writeText(this.shareStr.textContent) }, 'Salin'),
+      h('button', { class: 'sec small', title: 'Buat link undangan baru bila link lama kedaluwarsa/dicabut', onClick: async e => {
+        const b = e.currentTarget; b.disabled = true;
+        try { this.shareStr.textContent = await this.cb.onNewInvite(); } catch (er) { this.shareStr.textContent = 'Gagal: ' + (er.message || er); }
+        b.disabled = false;
+      } }, 'Link undangan baru'),
       h('div', { class: 'invite' },
         this.invUser, this.invSend, h('label', { for: 'inv-send', class: 'mu' }, 'Kirim juga connection string via DM'),
         h('button', { class: 'small', onClick: () => this.invite() }, 'Undang'),

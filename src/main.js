@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault, newVaultKey, rememberDevice, forgetDevice, unlockWithDevice } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, findChat, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
+import { connectClient, createChannel, resolveInvite, findChat, exportInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -40,6 +40,12 @@ function makeWs(sess, root) {
     onReset: () => resetLocal(sess).catch(e => log('Gagal: ' + errMsg(e), 'er')),
     onClose: () => closeSession(sess.dbId),
     getConn: () => sess.conn || '',
+    onNewInvite: async () => {
+      const hash = await exportInvite(client, sess.chat);
+      sess.conn = `tgpg://${hash}#${b64u.enc(sess.rawKey)}`;
+      if (V.dbs?.[sess.dbId]) { V.dbs[sess.dbId].conn = sess.conn; await persist(); }
+      return sess.conn;
+    },
     onDiagnose: () => runDiagnostics(client, sess.chat),
     onBackup: async () => eng().backup(),
     onApprove: sid => eng().approve(sid),

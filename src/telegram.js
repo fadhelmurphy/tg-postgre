@@ -29,8 +29,13 @@ export async function createChannel(client, name) {
     title: 'TGPG · ' + name, about: 'Log database TGPG (terenkripsi). Jangan hapus atau edit pesan.', megagroup: true,
   }));
   const chat = r.chats[0];
+  return { chat, hash: await exportInvite(client, chat) };
+}
+
+/** Buat link undangan baru (mis. saat link lama kedaluwarsa/dicabut). */
+export async function exportInvite(client, chat) {
   const inv = await client.invoke(new Api.messages.ExportChatInvite({ peer: chat }));
-  return { chat, hash: inviteHash(inv.link) };
+  return inviteHash(inv.link);
 }
 
 /** Resolve invite hash -> entity (join bila belum anggota). */
