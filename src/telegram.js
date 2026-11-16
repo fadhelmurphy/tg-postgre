@@ -41,12 +41,17 @@ export async function resolveInvite(client, hash) {
   return imp.chats[0];
 }
 
-/** Cari grup yang sudah diikuti berdasarkan id (tanpa link undangan; link bisa kedaluwarsa/dicabut). */
-export async function findChat(client, id) {
-  for await (const d of client.iterDialogs({ limit: 300 })) {
-    if (d.entity && String(d.entity.id) === String(id)) return d.entity;
+/** Cari grup yang sudah diikuti (tanpa link undangan; link bisa kedaluwarsa/dicabut): cocokkan id, lalu judul "TGPG · nama".
+ *  Mengembalikan { chat, titles } — titles = semua grup TGPG yang terlihat di akun ini (untuk diagnosis). */
+export async function findChat(client, id, title = '') {
+  const titles = []; let byTitle = null, n = 0;
+  for await (const d of client.iterDialogs({})) {
+    const e = d.entity; if (!e) continue;
+    if (String(e.id) === String(id)) return { chat: e, titles };
+    if (/^TGPG · /.test(e.title || '')) { titles.push(e.title); if (title && e.title === 'TGPG · ' + title) byTitle = byTitle ? 'dup' : e; }
+    if (++n > 2000) break;
   }
-  return null;
+  return { chat: byTitle && byTitle !== 'dup' ? byTitle : null, titles };
 }
 
 /** Tambahkan @username ke grup; opsional kirim connection string lewat DM. */

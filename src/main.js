@@ -164,7 +164,13 @@ async function connectString(str, savedId = null) {
   const m = CONN_RE.exec(str.trim());
   if (!m) throw new Error('Format harus tgpg://INVITE#KUNCI');
   let chat = null;
-  if (savedId) chat = await findChat(client, savedId).catch(() => null);   // sudah anggota: tak perlu link undangan
+  if (savedId) {   // sudah anggota: tak perlu link undangan
+    try {
+      const r = await findChat(client, savedId, V.dbs?.[savedId]?.title);
+      chat = r.chat;
+      if (!chat) log('Grup tidak ada di daftar chat akun ini. Grup TGPG yang terlihat: ' + (r.titles.join(', ') || '(tidak ada)'), 'er');
+    } catch (e) { log('Gagal membaca daftar chat: ' + errMsg(e), 'er'); }
+  }
   if (!chat) {
     try { chat = await resolveInvite(client, m[1]); }
     catch (e) {

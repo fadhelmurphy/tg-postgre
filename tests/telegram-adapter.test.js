@@ -154,8 +154,10 @@ describe('runDiagnostics', () => {
 import { findChat } from '../src/telegram.js';
 describe('findChat', () => {
   const mk = list => ({ iterDialogs: async function* () { for (const e of list) yield { entity: e }; } });
-  it('menemukan grup berdasarkan id tanpa link undangan', async () => {
-    expect((await findChat(mk([{ id: 5n }, { id: 77n, title: 'x' }]), '77')).title).toBe('x');
-    expect(await findChat(mk([{ id: 5n }]), '9')).toBe(null);
+  it('cocok id, lalu judul; melaporkan grup TGPG yang terlihat', async () => {
+    const l = [{ id: 5n, title: 'lain' }, { id: 77n, title: 'TGPG · x' }];
+    expect((await findChat(mk(l), '77')).chat.title).toBe('TGPG · x');
+    const r = await findChat(mk(l), '9', 'x'); expect(r.chat.id).toBe(77n); expect(r.titles).toEqual(['TGPG · x']);
+    const none = await findChat(mk(l), '9', 'y'); expect(none.chat).toBe(null); expect(none.titles).toEqual(['TGPG · x']);
   });
 });
