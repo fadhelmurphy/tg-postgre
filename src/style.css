@@ -153,3 +153,5 @@ button.danger-btn{background:#8b2b2b}
 .dbtab.on{border-color:#4f8cff;background:#22304a}
 .dbtab .x{margin-left:8px;opacity:.6}.dbtab .x:hover{opacity:1}
 .dbtab.add{opacity:.85}
+
+.syncbox{margin:12px 0;padding-top:10px;border-top:1px solid #2c3648}.syncbox .row{margin:6px 0}

@@ -97,3 +97,15 @@ export async function unlockWithDevice() {
     return { data: await open(vk, JSON.parse(localStorage.getItem(VAULT_KEY)).d), vk };
   } catch { return null; }
 }
+
+/* ── cadangan terenkripsi passphrase (sinkron antar perangkat) ── */
+export async function sealBlob(pass, obj) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const enc = await encrypt(await derive(pass, salt), new TextEncoder().encode(JSON.stringify(obj)));
+  const out = new Uint8Array(16 + enc.length); out.set(salt); out.set(enc, 16); return out;
+}
+export async function openBlob(pass, bytes) {
+  const u8 = new Uint8Array(bytes);
+  try { return JSON.parse(new TextDecoder().decode(await decrypt(await derive(pass, u8.slice(0, 16)), u8.slice(16)))); }
+  catch { throw new Error('Passphrase sinkron salah (atau cadangan rusak)'); }
+}

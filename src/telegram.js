@@ -70,6 +70,25 @@ export async function listTgpgChats(client) {
   return out;
 }
 
+const SYNC_TAG = 'TGPG-SYNC1';
+const syncMsgs = async client => (await client.getMessages('me', { limit: 100 })).filter(m => m.media && m.message === SYNC_TAG);
+/** Ambil cadangan sinkron (byte terenkripsi) dari Saved Messages; null bila belum ada. */
+export async function pullSyncBlob(client) {
+  const m = (await syncMsgs(client))[0];
+  return m ? new Uint8Array(await client.downloadMedia(m, {})) : null;
+}
+/** Simpan cadangan baru di Saved Messages, lalu hapus yang lama. */
+export async function pushSyncBlob(client, bytes) {
+  const buf = Buffer.from(bytes);
+  const sent = await client.sendFile('me', { file: new CustomFile('tgpg-sync.bin', buf.length, '', buf), caption: SYNC_TAG, forceDocument: true });
+  const old = (await syncMsgs(client)).filter(m => m.id !== sent.id).map(m => m.id);
+  if (old.length) await client.deleteMessages('me', old, { revoke: true });
+}
+export async function deleteSyncBlob(client) {
+  const ids = (await syncMsgs(client)).map(m => m.id);
+  if (ids.length) await client.deleteMessages('me', ids, { revoke: true });
+}
+
 /** Tambahkan @username ke grup; opsional kirim connection string lewat DM. */
 export async function inviteUser(client, chat, username, { connStr = '', sendKey = false } = {}) {
   const name = String(username || '').trim().replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '');

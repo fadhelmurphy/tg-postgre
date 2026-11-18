@@ -1,9 +1,10 @@
 import './style.css';
 import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
-import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault, newVaultKey, rememberDevice, forgetDevice, unlockWithDevice } from './crypto.js';
+import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, sealBlob, openBlob, loadVault, deleteVault, newVaultKey, rememberDevice, forgetDevice, unlockWithDevice } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, findChat, listTgpgChats, exportInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
+import { buildPayload, mergePayload } from './sync.js';
+import { connectClient, createChannel, resolveInvite, findChat, listTgpgChats, pullSyncBlob, pushSyncBlob, deleteSyncBlob, exportInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -91,7 +92,64 @@ async function closeSession(id) {
   if (activeId === id) view([...sessions.keys()].pop() || null); else renderBar();
 }
 
-const persist = () => saveVault(VK, V);
+const persist = async () => { await saveVault(VK, V); schedulePush(); };
+
+/* ───────── sinkron antar perangkat (Saved Messages, terenkripsi passphrase sinkron) ───────── */
+let REMOTE = false, lastPushed = '', pushTimer = null, syncMsg = '';
+function schedulePush() {
+  if (!V?.syncPass || !client) return;
+  clearTimeout(pushTimer);
+  pushTimer = setTimeout(() => pushNow().catch(e => log('Sinkron gagal: ' + errMsg(e), 'er')), 4000);
+}
+async function pushNow() {
+  const payload = buildPayload(V), j = JSON.stringify(payload);
+  if (j === lastPushed) return;
+  await pushSyncBlob(client, await sealBlob(V.syncPass, payload));
+  lastPushed = j; REMOTE = true; syncMsg = 'Terakhir disinkron ' + new Date().toLocaleTimeString(); renderSync();
+}
+/** Tarik cadangan, gabungkan ke vault lokal. Mengembalikan false bila belum ada cadangan. */
+async function pullNow(pass) {
+  const bytes = await pullSyncBlob(client);
+  if (!bytes) return false;
+  const p = await openBlob(pass, bytes);
+  lastPushed = JSON.stringify(p);
+  if (mergePayload(V, p)) await saveVault(VK, V);
+  renderSaved(); return true;
+}
+function renderSync() {
+  const box = $('syncBox'); if (!box || !V) return; box.replaceChildren();
+  const mk = (tag, props = {}, text = '') => Object.assign(document.createElement(tag), props, text ? { textContent: text } : {});
+  const hint = mk('div', { className: 'mu' });
+  if (V.syncPass) {
+    hint.textContent = '☁ Sinkron antar perangkat aktif — daftar database + kunci tersimpan terenkripsi di Saved Messages Telegram Anda. ' + syncMsg;
+    const now = mk('button', { className: 'sec small' }, 'Sinkron sekarang');
+    now.onclick = () => pullNow(V.syncPass).then(() => pushNow()).catch(e => log('Sinkron gagal: ' + errMsg(e), 'er'));
+    const off = mk('button', { className: 'sec small' }, 'Matikan');
+    off.onclick = async () => { delete V.syncPass; clearTimeout(pushTimer); await persist(); renderSync(); };
+    const del = mk('button', { className: 'sec small' }, 'Hapus cadangan');
+    del.onclick = async () => {
+      if (!confirm('Hapus cadangan dari Saved Messages? Perangkat lain tidak lagi bisa memulihkan kunci dari sana.')) return;
+      await deleteSyncBlob(client); delete V.syncPass; REMOTE = false; lastPushed = ''; await persist(); renderSync();
+    };
+    box.append(hint, now, off, del); return;
+  }
+  hint.textContent = REMOTE
+    ? '☁ Cadangan ditemukan di Saved Messages akun ini. Masukkan passphrase sinkron untuk memulihkan database + kunci di perangkat ini.'
+    : '☁ Sinkron antar perangkat: simpan daftar database + kunci terenkripsi di Saved Messages akun Telegram Anda. Buat passphrase sinkron (terpisah dari passphrase lokal).';
+  const inp = mk('input', { type: 'password', placeholder: 'Passphrase sinkron (min. 8 karakter)', autocomplete: 'off' });
+  const go = mk('button', { className: 'sec small' }, REMOTE ? 'Pulihkan' : 'Aktifkan');
+  go.onclick = async () => {
+    const pass = inp.value;
+    if (pass.length < 8) return log('Passphrase sinkron minimal 8 karakter.', 'er');
+    try {
+      if (REMOTE && !(await pullNow(pass))) REMOTE = false;
+      V.syncPass = pass; await persist(); await pushNow().catch(() => {});
+      log(REMOTE ? 'Database dipulihkan & sinkron aktif.' : 'Sinkron aktif.', 'ok'); renderSaved();
+    } catch (e) { delete V.syncPass; log('Gagal: ' + errMsg(e), 'er'); }
+  };
+  const row = mk('div', { className: 'row' }); row.append(inp, go);
+  box.append(hint, row);
+}
 
 function ask(label, secret = false) {
   return new Promise(res => {
@@ -130,6 +188,8 @@ async function startClient() {
     const me = await client.getMe();
     $('who').textContent = 'Login sebagai ' + (me.username ? '@' + me.username : me.firstName || me.id);
     show('c-login', false); show('c-db'); renderSaved(); discover();
+    if (V.syncPass) pullNow(V.syncPass).then(() => schedulePush()).catch(e => log('Sinkron: ' + errMsg(e), 'er'));
+    else pullSyncBlob(client).then(b => { REMOTE = !!b; renderSync(); }).catch(() => {});
     log('Terhubung ke Telegram.', 'ok');
   } catch (e) {
     log('Login gagal: ' + errMsg(e), 'er');
@@ -138,14 +198,14 @@ async function startClient() {
 }
 
 function renderSaved() {
-  const box = $('saved'); box.replaceChildren();
+  const box = $('saved'); box.replaceChildren(); renderSync();
   for (const [id, d] of Object.entries(V.dbs || {})) {
     const row = document.createElement('div'); row.className = 'saved-item';
     const label = document.createElement('span'); label.textContent = (sessions.has(id) ? '● ' : '') + (d.title || id);
     const open = document.createElement('button'); open.className = 'sec small'; open.textContent = sessions.has(id) ? 'Lihat' : 'Buka';
     open.onclick = () => connectString(d.conn, id).catch(e => log('Gagal: ' + errMsg(e), 'er'));
     const del = document.createElement('button'); del.className = 'sec small'; del.textContent = 'Lupakan';
-    del.onclick = async () => { await closeSession(id); delete V.dbs[id]; await persist(); renderSaved(); };
+    del.onclick = async () => { await closeSession(id); (V.gone = V.gone || {})[id] = Date.now(); delete V.dbs[id]; await persist(); renderSaved(); };
     row.append(label, open, del); box.appendChild(row);
   }
   const extra = FOUND.filter(c => !(V.dbs || {})[String(c.id)]);
@@ -229,7 +289,8 @@ async function openDatabase(chat, rawKey, conn) {
   if (!V.identity) { const id = await genIdentity(); V.identity = { jwk: id.jwk, pub: id.pub }; await persist(); }
   const identity = await loadIdentity(V.identity);
   V.dbs = V.dbs || {};
-  const rec = V.dbs[dbId] = { ...(V.dbs[dbId] || {}), conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
+  if (V.gone) delete V.gone[dbId];
+  const rec = V.dbs[dbId] = { ...(V.dbs[dbId] || {}), addedAt: V.dbs[dbId]?.addedAt || Date.now(), conn, title: (chat.title || '').replace(/^TGPG · /, '') || dbId };
   log('Membuka database ' + rec.title + '…');
   const root = document.createElement('div'); $('c-work').appendChild(root);
   const sess = { dbId, chat, rawKey, conn, engine: null, root, syncTimer: null };

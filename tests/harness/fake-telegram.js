@@ -11,3 +11,7 @@ export async function kickUser() {}
 export async function runDiagnostics() { return []; }
 export class TelegramTransport { constructor(_c, chat) { return chans.get(chat.id).handle('1001'); } }
 export async function listTgpgChats() { return [...byHash.values()]; }
+// cadangan sinkron (Saved Messages palsu) disimpan di sessionStorage agar bertahan lintas reload
+export async function pullSyncBlob() { const s = sessionStorage.getItem('fake-sync'); return s ? Uint8Array.from(atob(s), c => c.charCodeAt(0)) : null; }
+export async function pushSyncBlob(_c, bytes) { sessionStorage.setItem('fake-sync', btoa(String.fromCharCode(...bytes))); }
+export async function deleteSyncBlob() { sessionStorage.removeItem('fake-sync'); }
