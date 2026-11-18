@@ -10,3 +10,4 @@ export async function inviteUser() { return { username: 'x', dm: false }; }
 export async function kickUser() {}
 export async function runDiagnostics() { return []; }
 export class TelegramTransport { constructor(_c, chat) { return chans.get(chat.id).handle('1001'); } }
+export async function listTgpgChats() { return [...byHash.values()]; }

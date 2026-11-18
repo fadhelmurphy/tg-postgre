@@ -3,7 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { PGliteWorker } from '@electric-sql/pglite/worker';
 import { b64u, genIdentity, loadIdentity, importKey, randomKeyBytes, hasVault, saveVault, loadVault, deleteVault, newVaultKey, rememberDevice, forgetDevice, unlockWithDevice } from './crypto.js';
 import { Engine } from './engine.js';
-import { connectClient, createChannel, resolveInvite, findChat, exportInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
+import { connectClient, createChannel, resolveInvite, findChat, listTgpgChats, exportInvite, inviteUser, kickUser, runDiagnostics, TelegramTransport } from './telegram.js';
 import { Workspace } from './ui/workspace.js';
 
 const $ = id => document.getElementById(id);
@@ -27,6 +27,8 @@ let VK = null;           // kunci vault (CryptoKey)
 let client = null;
 const sessions = new Map();   // dbId -> {dbId, chat, rawKey, conn, engine, ws, root, syncTimer}
 let activeId = null;
+let FOUND = [];          // grup TGPG di akun Telegram ini (belum tentu ada kuncinya di browser ini)
+async function discover() { try { FOUND = await listTgpgChats(client); } catch (e) { FOUND = []; log('Gagal memindai grup TGPG: ' + errMsg(e), 'er'); } renderSaved(); }
 const heldLocks = new Set();
 
 function makeWs(sess, root) {
@@ -127,7 +129,7 @@ async function startClient() {
     client = r.client; V.session = r.session; await persist();
     const me = await client.getMe();
     $('who').textContent = 'Login sebagai ' + (me.username ? '@' + me.username : me.firstName || me.id);
-    show('c-login', false); show('c-db'); renderSaved();
+    show('c-login', false); show('c-db'); renderSaved(); discover();
     log('Terhubung ke Telegram.', 'ok');
   } catch (e) {
     log('Login gagal: ' + errMsg(e), 'er');
@@ -145,6 +147,24 @@ function renderSaved() {
     const del = document.createElement('button'); del.className = 'sec small'; del.textContent = 'Lupakan';
     del.onclick = async () => { await closeSession(id); delete V.dbs[id]; await persist(); renderSaved(); };
     row.append(label, open, del); box.appendChild(row);
+  }
+  const extra = FOUND.filter(c => !(V.dbs || {})[String(c.id)]);
+  if (extra.length) {
+    const h = document.createElement('div'); h.className = 'mu'; h.style.margin = '10px 0 4px';
+    h.textContent = 'Ditemukan di akun Telegram ini — kunci enkripsi tidak disimpan di Telegram, tempel connection string/kunci dari perangkat lain (Bagikan → Salin):';
+    box.appendChild(h);
+    for (const c of extra) {
+      const row = document.createElement('div'); row.className = 'saved-item';
+      const label = document.createElement('span'); label.textContent = (c.title || '').replace(/^TGPG · /, '');
+      const inp = document.createElement('input'); inp.placeholder = 'tgpg://…#KUNCI atau kunci saja'; inp.autocomplete = 'off'; inp.style.flex = '1';
+      const go = document.createElement('button'); go.className = 'sec small'; go.textContent = 'Buka';
+      go.onclick = async () => {
+        const m = /([A-Za-z0-9_-]{43})\s*$/.exec(inp.value.trim());
+        if (!m) return log('Kunci tidak valid (43 karakter setelah # pada connection string).', 'er');
+        try { await openDatabase(c, b64u.dec(m[1]), `tgpg://G${c.id}#${m[1]}`); } catch (e) { log('Gagal: ' + errMsg(e), 'er'); }
+      };
+      row.append(label, inp, go); box.appendChild(row);
+    }
   }
 }
 
@@ -164,6 +184,7 @@ async function createDatabase() {
   const { chat, hash } = await createChannel(client, name);
   log('Grup Telegram dibuat: ' + name, 'ok');
   await openDatabase(chat, key, `tgpg://${hash}#${b64u.enc(key)}`);
+  discover();
 }
 
 async function connectString(str, savedId = null) {

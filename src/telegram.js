@@ -59,6 +59,17 @@ export async function findChat(client, id, title = '') {
   return { chat: byTitle && byTitle !== 'dup' ? byTitle : null, titles };
 }
 
+/** Semua grup "TGPG · nama" yang diikuti akun ini (kunci enkripsinya TIDAK ada di Telegram). */
+export async function listTgpgChats(client) {
+  const out = []; let n = 0;
+  for await (const d of client.iterDialogs({})) {
+    const e = d.entity;
+    if (e && /^TGPG · /.test(e.title || '')) out.push(e);
+    if (++n > 2000) break;
+  }
+  return out;
+}
+
 /** Tambahkan @username ke grup; opsional kirim connection string lewat DM. */
 export async function inviteUser(client, chat, username, { connStr = '', sendKey = false } = {}) {
   const name = String(username || '').trim().replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '');
