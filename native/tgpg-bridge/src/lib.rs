@@ -5,7 +5,10 @@ use std::{collections::HashMap, net::SocketAddr, sync::{Arc, Mutex}};
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use futures::{stream, Sink};
+use pgwire::api::auth::cleartext::CleartextPasswordAuthStartupHandler;
 use pgwire::api::auth::noop::NoopStartupHandler;
+use pgwire::api::auth::{AuthSource, DefaultServerParameterProvider, LoginInfo, Password, StartupHandler};
+use pgwire::messages::PgWireFrontendMessage;
 use pgwire::api::portal::{Format, Portal};
 use pgwire::api::query::{ExtendedQueryHandler, SimpleQueryHandler};
 use pgwire::api::results::{DescribePortalResponse, DescribeStatementResponse, FieldFormat, FieldInfo, QueryResponse, Response, Tag};
@@ -23,10 +26,14 @@ use tgpg_core::sqlx::{inline_params, is_read, split_statements};
 #[derive(Default)]
 struct ConnState { in_tx: bool, buf: Vec<String> }
 
-pub struct Bridge { engine: Engine, conns: Mutex<HashMap<SocketAddr, ConnState>>, parser: Arc<NoopQueryParser> }
+pub struct Bridge { engine: Engine, conns: Mutex<HashMap<SocketAddr, ConnState>>, parser: Arc<NoopQueryParser>, startup: Arc<Startup> }
 
 impl Bridge {
-    pub fn new(engine: Engine) -> Arc<Bridge> { Arc::new(Bridge { engine, conns: Mutex::new(HashMap::new()), parser: Arc::new(NoopQueryParser::new()) }) }
+    pub fn new(engine: Engine) -> Arc<Bridge> { Self::with_password(engine, None) }
+    /// `password`: bila diisi, klien wajib mengirim sandi itu (user bebas). Dikirim cleartext: pakai hanya di jaringan tepercaya / lewat tunnel.
+    pub fn with_password(engine: Engine, password: Option<String>) -> Arc<Bridge> {
+        Arc::new(Bridge { engine, conns: Mutex::new(HashMap::new()), parser: Arc::new(NoopQueryParser::new()), startup: Arc::new(Startup::new(password)) })
+    }
 }
 
 fn uerr(code: &str, msg: impl Into<String>) -> PgWireError { PgWireError::UserError(Box::new(ErrorInfo::new("ERROR".into(), code.into(), msg.into()))) }
@@ -164,8 +171,35 @@ impl Bridge {
     }
 }
 
+/// Sumber sandi tunggal (dibandingkan apa adanya). Debug sengaja tidak mencetak sandi.
+struct PwSource(String);
+impl Debug for PwSource { fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("PwSource(***)") } }
 #[async_trait]
-impl NoopStartupHandler for Bridge {}
+impl AuthSource for PwSource {
+    async fn get_password(&self, _login: &LoginInfo) -> PgWireResult<Password> { Ok(Password::new(None, self.0.as_bytes().to_vec())) }
+}
+struct NoAuth;
+#[async_trait]
+impl NoopStartupHandler for NoAuth {}
+
+/// Startup: tanpa sandi (localhost) atau cleartext-password bila dikonfigurasi.
+pub struct Startup { clear: Option<CleartextPasswordAuthStartupHandler<PwSource, DefaultServerParameterProvider>>, noop: NoAuth }
+impl Startup {
+    fn new(password: Option<String>) -> Self {
+        Startup { clear: password.map(|p| CleartextPasswordAuthStartupHandler::new(PwSource(p), DefaultServerParameterProvider::default())), noop: NoAuth }
+    }
+}
+#[async_trait]
+impl StartupHandler for Startup {
+    async fn on_startup<C>(&self, client: &mut C, message: PgWireFrontendMessage) -> PgWireResult<()>
+    where
+        C: ClientInfo + Sink<PgWireBackendMessage> + Unpin + Send + Sync,
+        C::Error: Debug,
+        PgWireError: From<<C as Sink<PgWireBackendMessage>>::Error>,
+    {
+        match &self.clear { Some(h) => h.on_startup(client, message).await, None => self.noop.on_startup(client, message).await }
+    }
+}
 
 #[async_trait]
 impl SimpleQueryHandler for Bridge {
@@ -229,18 +263,24 @@ pub struct Factory(pub Arc<Bridge>);
 impl PgWireServerHandlers for Factory {
     fn simple_query_handler(&self) -> Arc<impl SimpleQueryHandler> { self.0.clone() }
     fn extended_query_handler(&self) -> Arc<impl ExtendedQueryHandler> { self.0.clone() }
-    fn startup_handler(&self) -> Arc<impl pgwire::api::auth::StartupHandler> { self.0.clone() }
+    fn startup_handler(&self) -> Arc<impl StartupHandler> { self.0.startup.clone() }
 }
 
-/// Jalankan server. Secara default hanya menerima alamat loopback (tanpa autentikasi, jangan dibuka ke jaringan).
-pub async fn serve(engine: Engine, addr: SocketAddr, allow_remote: bool) -> anyhow::Result<()> {
-    if !addr.ip().is_loopback() && !allow_remote { anyhow::bail!("alamat {addr} bukan loopback; server tanpa autentikasi hanya boleh di 127.0.0.1 (gunakan allow_remote bila benar-benar paham risikonya)"); }
+/// Jalankan server. Tanpa `password`, hanya alamat loopback yang diterima (tanpa autentikasi, jangan dibuka ke jaringan).
+/// Dengan `password`, alamat non-loopback diizinkan (tetap tanpa TLS).
+pub async fn serve_with(engine: Engine, addr: SocketAddr, allow_remote: bool, password: Option<String>) -> anyhow::Result<()> {
+    if !addr.ip().is_loopback() && !allow_remote && password.is_none() {
+        anyhow::bail!("alamat {addr} bukan loopback; server tanpa autentikasi hanya boleh di 127.0.0.1 (set sandi/token, atau allow_remote bila benar-benar paham risikonya)");
+    }
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    serve_listener(engine, listener).await
+    serve_listener_with(engine, listener, password).await
 }
+pub async fn serve(engine: Engine, addr: SocketAddr, allow_remote: bool) -> anyhow::Result<()> { serve_with(engine, addr, allow_remote, None).await }
 
-pub async fn serve_listener(engine: Engine, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
-    let factory = Arc::new(Factory(Bridge::new(engine)));
+pub async fn serve_listener(engine: Engine, listener: tokio::net::TcpListener) -> anyhow::Result<()> { serve_listener_with(engine, listener, None).await }
+
+pub async fn serve_listener_with(engine: Engine, listener: tokio::net::TcpListener, password: Option<String>) -> anyhow::Result<()> {
+    let factory = Arc::new(Factory(Bridge::with_password(engine, password)));
     loop {
         let (sock, _) = listener.accept().await?;
         let f = factory.clone();

@@ -47,3 +47,65 @@ pub async fn open_engine(client: &grammers_client::Client, conn: &str, chat_titl
     tokio::spawn(async move { loop { tokio::time::sleep(Duration::from_secs(3)).await; if let Err(e) = e2.sync().await { l2(&format!("sync gagal: {e}"), "er"); } } });
     Ok(engine)
 }
+
+/// Token layanan: membawa sesi Telegram (akun layanan), connection string, judul grup, dan state identitas,
+/// supaya `tgpg serve --token` jalan tanpa login interaktif. Token = kredensial penuh: perlakukan seperti sandi.
+/// (Bukan terenkripsi: token itu sendiri adalah rahasianya.)
+pub mod token {
+    use super::*;
+    pub const PREFIX: &str = "tgpg-token1.";
+
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    pub struct Token { pub api_id: i32, pub conn: String, pub chat: String, pub session_b64: String, pub state: Option<String> }
+
+    pub fn hash_of(conn: &str) -> Result<String> {
+        let rest = conn.trim().strip_prefix("tgpg://").context("connection string harus diawali tgpg://")?;
+        Ok(rest.split_once('#').context("connection string tanpa #kunci")?.0.replace(['/', '\\'], "_"))
+    }
+    pub fn encode(t: &Token) -> Result<String> { Ok(format!("{PREFIX}{}", URL_SAFE_NO_PAD.encode(serde_json::to_vec(t)?))) }
+    pub fn decode(s: &str) -> Result<Token> {
+        let body = s.trim().strip_prefix(PREFIX).context("bukan token TGPG (harus diawali tgpg-token1.)")?;
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(body).context("token rusak")?).context("isi token tidak valid")
+    }
+    /// Buat token dari sesi hasil `tgpg login` di `dir` (TGPG_HOME) untuk connection string + judul grup.
+    pub fn create(dir: &std::path::Path, api_id: i32, conn: &str, chat: &str) -> Result<String> {
+        let session = std::fs::read(dir.join("telegram.session")).context("sesi tidak ditemukan — jalankan `tgpg login` dulu")?;
+        let state = std::fs::read_to_string(dir.join(format!("{}.json", hash_of(conn)?))).ok();
+        encode(&Token { api_id, conn: conn.trim().into(), chat: chat.into(), session_b64: URL_SAFE_NO_PAD.encode(session), state })
+    }
+    /// Pasang sesi + state dari token ke `dir`; kembalikan path file sesi. State yang sudah ada tidak ditimpa.
+    pub fn install(dir: &std::path::Path, t: &Token) -> Result<PathBuf> {
+        std::fs::create_dir_all(dir)?;
+        let hash = hash_of(&t.conn)?;
+        let sess = dir.join(format!("token-{hash}.session"));
+        if !sess.exists() { write_private(&sess, &URL_SAFE_NO_PAD.decode(&t.session_b64).context("sesi dalam token rusak")?)?; }
+        let sp = dir.join(format!("{hash}.json"));
+        if let (false, Some(st)) = (sp.exists(), &t.state) { write_private(&sp, st.as_bytes())?; }
+        Ok(sess)
+    }
+    fn write_private(p: &std::path::Path, b: &[u8]) -> Result<()> {
+        std::fs::write(p, b)?;
+        #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600))?; }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn bolak_balik_dan_install() {
+            let d = std::env::temp_dir().join(format!("tgpg-tok-{}", std::process::id())); let _ = std::fs::remove_dir_all(&d); std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("telegram.session"), b"SQLITEBYTES").unwrap();
+            std::fs::write(d.join("HASH1.json"), r#"{"secret_hex":"aa","keys":{}}"#).unwrap();
+            let tok = create(&d, 12345, "tgpg://HASH1#KUNCI", "TGPG · uji").unwrap();
+            assert!(tok.starts_with(PREFIX));
+            let t = decode(&tok).unwrap();
+            assert_eq!((t.api_id, t.chat.as_str()), (12345, "TGPG · uji"));
+            let d2 = std::env::temp_dir().join(format!("tgpg-tok2-{}", std::process::id())); let _ = std::fs::remove_dir_all(&d2);
+            let sess = install(&d2, &t).unwrap();
+            assert_eq!(std::fs::read(sess).unwrap(), b"SQLITEBYTES");
+            assert!(std::fs::read_to_string(d2.join("HASH1.json")).unwrap().contains("secret_hex"));
+            assert!(decode("sampah").is_err() && decode("tgpg-token1.@@@").is_err());
+        }
+    }
+}

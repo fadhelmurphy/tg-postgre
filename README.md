@@ -85,6 +85,22 @@ Lalu di DBeaver: host `127.0.0.1`, port sesuai `--listen`, database/user bebas, 
 Perilaku & batas:
 - Baca (`SELECT`, dst.) dijalankan di Postgres lokal; tulis dikirim ke grup sebagai op terenkripsi. Transaksi ditahan sampai `COMMIT` dan dikirim sebagai satu op; `SAVEPOINT` belum didukung.
 - Server tanpa autentikasi — hanya mau bind ke loopback.
+### Untuk REST API / server (tanpa login interaktif)
+
+Buat **token layanan** sekali dari mesin yang sudah `tgpg login` (sebaiknya dengan akun Telegram khusus layanan yang sudah jadi anggota grup):
+
+```bash
+tgpg token create 'tgpg://HASH#KUNCI' --chat 'TGPG · nama-db' > token.txt
+# di server/container API (butuh Postgres lokal untuk TGPG_PG_URL):
+TGPG_TOKEN="$(cat token.txt)" TGPG_PG_URL=postgres://u:p@127.0.0.1:5432/postgres \
+  tgpg serve --token "$TGPG_TOKEN" --listen 0.0.0.0:55432 --password "$SANDI"
+# REST API memakai driver Postgres biasa: postgres://app:$SANDI@host:55432/db
+```
+
+- Token berisi sesi Telegram + kunci database dan **tidak terenkripsi**: perlakukan seperti sandi. Jangan di-commit/di-log.
+- `--password` wajib bila `--listen` bukan localhost. Sandi dikirim cleartext tanpa TLS: pakai jaringan privat atau tunnel.
+- Cabut akses: Anggota → **Cabut** di aplikasi web (rotasi kunci + keluarkan akun), atau akhiri sesi di Telegram → Perangkat.
+
 - Klien native memutar ulang seluruh log (belum memakai snapshot); satu owner per database.
 - **Belum diuji terhadap Telegram sungguhan**: hanya transport memori yang diuji otomatis (`cargo test`, butuh `TGPG_TEST_PG`; lihat `native/scripts/pg-test.sh`). Transport Telegram (`tgpg-telegram`, grammers) baru terbukti terkompilasi. Aplikasi desktop mini (egui): `cargo run -p tgpg-gui` — login, buka database, status server, setujui/cabut anggota; juga baru terkompilasi, belum diuji.
 - Postgres tertanam (`postgresql_embedded`) belum dipasang; saat ini butuh Postgres lokal.

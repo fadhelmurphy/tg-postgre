@@ -33,3 +33,20 @@ async fn bridge_menulis_ke_log_dan_klien_lain_ikut() {
     let r = b.read("select v from t").await.unwrap();
     assert_eq!(r[0].rows, vec![vec![Some("halo".to_string())]]);
 }
+
+#[tokio::test]
+async fn sandi_wajib_bila_dikonfigurasi() {
+    let (ch, key) = (MemChannel::new(), SymKey::new(&random_key()).unwrap());
+    let a = open(&ch, "1", &key, Identity::generate()).await;
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = l.local_addr().unwrap().port();
+    tokio::spawn(tgpg_bridge::serve_listener_with(a, l, Some("rahasia-token".into())));
+    let bad = tokio_postgres::connect(&format!("host=127.0.0.1 port={port} user=app dbname=d password=salah"), tokio_postgres::NoTls).await;
+    assert!(bad.is_err(), "sandi salah harus ditolak");
+    let none = tokio_postgres::connect(&format!("host=127.0.0.1 port={port} user=app dbname=d"), tokio_postgres::NoTls).await;
+    assert!(none.is_err(), "tanpa sandi harus ditolak");
+    let (c, conn) = tokio_postgres::connect(&format!("host=127.0.0.1 port={port} user=app dbname=d password=rahasia-token"), tokio_postgres::NoTls).await.unwrap();
+    tokio::spawn(conn);
+    c.batch_execute("create table s(a int)").await.unwrap();
+    assert_eq!(c.query_one("select 1::int4", &[]).await.unwrap().get::<_, i32>(0), 1);
+}
